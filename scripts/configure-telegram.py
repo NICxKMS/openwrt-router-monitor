@@ -41,14 +41,15 @@ def store_secrets(token, chat_id, owner_id, runner=subprocess.run):
     node = shutil.which('node')
     if not node or not cli.is_file():
         raise RuntimeError('Install the project dependencies and sign into Cloudflare first.')
-    environment = dict(os.environ, WRANGLER_LOG_PATH=str(ROOT / 'apps/worker/.wrangler/logs'), WRANGLER_SEND_METRICS='false')
-    for name, value in [('TELEGRAM_BOT_TOKEN', token), ('TELEGRAM_CHAT_ID', chat_id), ('TELEGRAM_OWNER_ID', owner_id)]:
-        print('Saving ' + name + ' in Cloudflare…', flush=True)
-        result = runner([node, str(cli), 'secret', 'put', name], cwd=ROOT / 'apps/worker',
-                        input=value + '\n', text=True, capture_output=True, env=environment, timeout=90)
-        if result.returncode:
-            # Raw subprocess output is intentionally not printed around credential handling.
-            raise RuntimeError('Cloudflare could not save ' + name + '. Run Wrangler login, then retry.')
+    environment = dict(os.environ, WRANGLER_SEND_METRICS='false',
+                       WRANGLER_WRITE_LOGS='false', WRANGLER_LOG_SANITIZE='true')
+    secrets = {'TELEGRAM_BOT_TOKEN': token, 'TELEGRAM_CHAT_ID': chat_id, 'TELEGRAM_OWNER_ID': owner_id}
+    print('Saving the Telegram configuration in Cloudflare…', flush=True)
+    result = runner([node, str(cli), 'secret', 'bulk'], cwd=ROOT / 'apps/worker',
+                    input=json.dumps(secrets) + '\n', text=True, capture_output=True,
+                    env=environment, timeout=90)
+    if result.returncode:
+        raise RuntimeError('Cloudflare could not confirm the Telegram configuration. Run Wrangler login, then retry.')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

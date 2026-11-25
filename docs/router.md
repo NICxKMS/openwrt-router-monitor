@@ -1,6 +1,6 @@
 # Router installation and operation
 
-The user confirmed installation of both packages on their JIDU6111 on25 November2026. Enrollment and resource measurements remain to verify. It uses the router's BusyBox ash, awk, ubus and JSON shell library; no Python, Node.js or database credential is installed on the router. The web dashboard and Worker are separate deployments.
+Release 2 was installed and enrolled on the JIDU6111 on 25 November 2026. The router sent real telemetry, and an initial CPU, RSS and buffer observation is documented in the benchmark report. Controlled routing and Wi-Fi tests and long-term quota observation remain pending. It uses the router's BusyBox ash, awk, ubus and JSON shell library; no Python, Node.js or database credential is installed on the router. The web dashboard and Worker are separate deployments.
 
 ## Build the two packages
 
@@ -34,7 +34,7 @@ The credential is `/etc/nicx-telemetry/token`, directory mode700 and file mode60
 
 Defaults are system samples10s, upload30s, Wi-Fi30s, process RSS60s, extended memory/thermal/storage/service detail300s and optional reachability probes30s. Probes are enabled in the shipped UCI configuration and can be turned off: they send two pings each to the configured IPv4/IPv6 targets and the current IPv4 gateway, plus one fixed `example.com` DNS lookup. Telemetry itself only uses outbound verified HTTPS to the configured Worker; no inbound listener, remote shell or Worker-supplied command exists.
 
-Adaptive sampling is enabled locally by default. Three consecutive observations of CPU≥90%, available memory<5%, or queue fill>80% trigger protection. System collection slows to three times the configured interval, at least30s and never more than300s. Slow collector intervals double within their normal safety ceilings; internet probes become60s. Six consecutive observations of CPU<70%, memory>10% and queue fill<50% restore normal cadence. You can disable this in LuCI. Status shows the effective interval and pressure reason. Upload success/failure counters count completed attempts during this agent process lifetime, including local credential/transport rejection. The local RSS and peak RSS read the parent process VmRSS/VmHWM; CPU is that parent user+system tick delta divided by all machine CPU ticks. The first CPU observation is null, no clock-tick frequency is guessed, and curl/collector children are explicitly excluded. These local parent-only gauges do not replace the full hardware benchmark; actual router overhead remains unmeasured.
+Adaptive sampling is enabled locally by default. Three consecutive observations of CPU≥90%, available memory<5%, or queue fill>80% trigger protection. System collection slows to three times the configured interval, at least30s and never more than300s. Slow collector intervals double within their normal safety ceilings; internet probes become60s. Six consecutive observations of CPU<70%, memory>10% and queue fill<50% restore normal cadence. You can disable this in LuCI. Status shows the effective interval and pressure reason. Upload success/failure counters count completed attempts during this agent process lifetime, including local credential/transport rejection. The local RSS and peak RSS read the parent process VmRSS/VmHWM; CPU is that parent user+system tick delta divided by all machine CPU ticks. The first CPU observation is null, no clock-tick frequency is guessed, and curl/collector children are explicitly excluded. Initial hardware observations included parent and process-tree RSS and sampled CPU ticks. Controlled forwarding and Wi-Fi overhead and unique memory attribution remain pending.
 
 Slow collectors and uploads run separately so network timeouts do not hold up the normal sample loop. Each collector has at most one active invocation. Source commands have2–5s timeouts, upload connection timeout8s and total timeout20s. Sample age and byte-rate elapsed time use kernel monotonic uptime; sample timing can still vary with CPU load and the short interface lookup.
 
@@ -71,7 +71,7 @@ Hardware acceptance still includes follow-up service-state/Wi-Fi fixes, firmware
 
 ## This workspace
 
-The signed build artifacts are in artifacts/openwrt/ and the parent combined feed. From the parent firmware workspace, run make install-packages and search nicx to select both packages. The existing installer verifies the board, full kernel and signing key and simulates the package plan before installation. User confirmed JIDU6111 at192.168.50.1, kernel6.18.60 and APK. No firmware flashing is needed for these userspace packages. Installation must still be confirmed on that actual router.
+The signed build artifacts are in artifacts/openwrt/ and the parent combined feed. From the parent firmware workspace, run make install-packages and search nicx to select both packages. The existing installer verifies the board, full kernel and signing key and simulates the package plan before installation. User confirmed JIDU6111 at192.168.50.1, kernel6.18.60 and APK. No firmware flashing is needed for these userspace packages. Release 2 installation and its matching cloud snapshot receipt were verified on this router. Release 3 was built and awaits rollout.
 
 When building through direct make command-line module overrides instead of menuconfig, explicitly build the stat dependency too:
 
@@ -80,4 +80,4 @@ make package/feeds/packages/coreutils/compile CONFIG_PACKAGE_coreutils-stat=m
 make package/index package/merge-index
 ```
 
-From the monitoring project, run `python3 scripts/verify-openwrt-feed.py --source /path/to/openwrt` to verify signatures and complete dependency closure in an isolated temporary APK database before offering the feed to the router. The current combined feed passes this simulation for both monitoring packages and all38 dependencies from an empty database. This is a simulated install, not proof of installation on the physical router.
+From the monitoring project, run `python3 scripts/verify-openwrt-feed.py --source /path/to/openwrt` to check the signed feed and install the selected dependency archives into an isolated temporary APK root with package scripts disabled before offering the feed to a router.

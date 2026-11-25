@@ -13,3 +13,15 @@ beforeEach(()=>{vi.clearAllMocks();mock.instances.length=0;vi.stubGlobal('Resize
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 it('configures the tooltip and crosshair header in the display timezone',()=>{render(<Chart data={[]} metric="cpu_pct"/>);const option=mock.setOption.mock.calls[0][0];const formatted=option.xAxis.axisPointer.label.formatter({value:Date.parse('2026-11-25T00:00:00Z')});expect(formatted).toContain('5:30:00');expect(formatted).toContain('25 Nov 2026');});
 it('connects overview telemetry charts in one group and isolates firmware comparison charts',()=>{render(<><Chart data={[]} metric="cpu_pct"/><Chart data={[]} metric="temp_c"/><Chart data={[]} metric="cpu_pct" compare={{baseline:[],comparison:[],metric:'cpu_pct'}}/></>);expect(mock.instances[0].group).toBe('telemetry');expect(mock.instances[1].group).toBe('telemetry');expect(mock.instances[2].group).toBe('compare');expect(mock.connect).toHaveBeenCalledWith('telemetry');expect(mock.connect).toHaveBeenCalledWith('compare');});
+
+it('keeps the chart and its zoom when new samples arrive', () => {
+  const view = render(<Chart data={[]} metric="cpu_pct" group="zoom-retention" />);
+  mock.getOption.mockReturnValueOnce({dataZoom: [{start: 12, end: 84}]});
+  mock.on.mock.calls.find(([name]) => name === 'datazoom')?.[1]();
+  const sample = {received_at: '2026-01-01T00:00:00Z', cpu_pct: 15, mem_available_kb: null,
+    temp_c: null, rx_bytes_delta: null, tx_bytes_delta: null, elapsed_s: null};
+  view.rerender(<Chart data={[sample]} metric="cpu_pct" group="zoom-retention" />);
+  expect(mock.instances).toHaveLength(1);
+  expect(mock.dispose).not.toHaveBeenCalled();
+  expect(mock.setOption.mock.lastCall?.[0].dataZoom[0]).toMatchObject({start: 12, end: 84});
+});

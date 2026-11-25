@@ -76,8 +76,36 @@ export default function Chart({
   const zoomScopeKey = `${device?.id || 'none'}:${range ? timeRangeKey(range) : 'default'}:${chartGroup}`;
 
   useEffect(() => {
-    if (!element.current) return;
+    const host = element.current;
+    if (!host) return;
     let observer: ResizeObserver | undefined;
+    try {
+      const chart = echarts.init(host, undefined, { renderer: 'canvas' });
+      instance.current = chart;
+      chart.group = chartGroup;
+      echarts.connect?.(chartGroup);
+      chart.on?.('datazoom', () => {
+        const currentOption = chart.getOption?.() as { dataZoom?: Array<{ start?: number; end?: number }> } | undefined;
+        const zoom = currentOption?.dataZoom?.[0];
+        if (zoom && typeof zoom.start === 'number' && typeof zoom.end === 'number') {
+          sharedZoomByKey.set(zoomScopeKey, { start: zoom.start, end: zoom.end });
+        }
+      });
+      observer = new ResizeObserver(() => chart.resize());
+      observer.observe(host);
+    } catch {
+      setError('Chart could not load. Refresh to retry.');
+    }
+    return () => {
+      observer?.disconnect();
+      instance.current?.dispose();
+      instance.current = null;
+    };
+  }, [chartGroup, zoomScopeKey]);
+
+  useEffect(() => {
+    const chart = instance.current;
+    if (!chart) return;
     const dark = theme === 'dark';
     const palette = {
       text: dark ? '#8f96a0' : '#5c626d',
@@ -94,10 +122,6 @@ export default function Chart({
     };
 
     try {
-      const chart = echarts.init(element.current, undefined, { renderer: 'canvas' });
-      instance.current = chart;
-      chart.group = chartGroup;
-      echarts.connect?.(chartGroup);
       const savedZoom = sharedZoomByKey.get(zoomScopeKey);
       const isCompare = Boolean(compare);
       const timestamps = data.map((d) => Date.parse(String(d.bucket || d.observed_at || d.received_at))).filter(Number.isFinite);
@@ -122,7 +146,7 @@ export default function Chart({
       });
 
       let effectiveUnit = unit;
-      let yBounds: { min?: number; max?: number } = {};
+      let yBounds: { min: number | null; max: number | null } = { min: null, max: null };
       let series: ReturnType<typeof makeLine>[] = [];
       let showLegend = false;
 
@@ -329,27 +353,11 @@ export default function Chart({
           },
         ],
         series,
-      });
-
-      chart.on?.('datazoom', () => {
-        const currentOption = chart.getOption?.() as { dataZoom?: Array<{ start?: number; end?: number }> } | undefined;
-        const zoomEntry = currentOption?.dataZoom?.[0];
-        if (zoomEntry && typeof zoomEntry.start === 'number' && typeof zoomEntry.end === 'number') {
-          sharedZoomByKey.set(zoomScopeKey, { start: zoomEntry.start, end: zoomEntry.end });
-        }
-      });
-
-      observer = new ResizeObserver(() => chart.resize());
-      observer.observe(element.current);
+      }, { replaceMerge: ['series'] });
+      setError('');
     } catch {
       setError('Chart could not load. Refresh to retry.');
     }
-
-    return () => {
-      observer?.disconnect();
-      instance.current?.dispose();
-      instance.current = null;
-    };
   }, [data, metric, label, unit, memTotalKb, compare, zone, theme, chartGroup, zoomScopeKey]);
 
   return (

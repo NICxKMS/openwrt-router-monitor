@@ -16,7 +16,7 @@
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm --filter @nicx/dashboard build && pnpm --filter @nicx/worker build",
     "estimate": "node --import tsx scripts/estimate.ts",
-    "preflight": "node scripts/preflight.mjs",
+    "preflight": "node --import tsx scripts/preflight.mjs",
     "test:browser": "playwright test -c tests/browser/playwright.config.ts"
   },
   "devDependencies": {

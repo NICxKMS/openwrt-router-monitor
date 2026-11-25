@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Copy, KeyRound, Plus, ShieldAlert } from 'lucide-react';
 import { ownerApi, db } from '../lib/client';
 import { copyText } from '../lib/async';
@@ -100,14 +100,12 @@ export function Enrollment() {
 
 export function Settings() {
   const { device, zone, setZone, theme, setTheme, refresh, tick, refreshSeconds, setRefreshSeconds } = useMonitor();
-  const context = useRef({ deviceId: device!.id, generation: 0 });
-  if (context.current.deviceId !== device!.id) context.current = { deviceId: device!.id, generation: context.current.generation + 1 };
-  useEffect(
-    () => () => {
-      context.current.generation++;
-    },
-    [],
-  );
+  const deviceId = device!.id;
+  const context = useRef({ deviceId, generation: 0 });
+  useLayoutEffect(() => {
+    context.current = { deviceId, generation: context.current.generation + 1 };
+    return () => { context.current.generation++; };
+  }, [deviceId]);
 
   const [name, setName] = useState(device?.name || '');
   const [config, setConfig] = useState<Row>({});

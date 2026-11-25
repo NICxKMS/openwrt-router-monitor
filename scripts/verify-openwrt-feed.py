@@ -24,5 +24,6 @@ with tempfile.TemporaryDirectory(prefix='nicx-feed-verification-') as temporary:
     shutil.copyfile(key, keys / 'public-key.pem')
     base = [str(binary), '--root', str(root), '--usermode', '--no-cache', '--repositories-file', '/dev/null', '--keys-dir', str(keys), '--arch', 'aarch64_cortex-a53']
     subprocess.run([*base, '--initdb', 'add'], check=True)
-    print('SIMULATION ONLY: signed feed dependency closure; no router changes.', flush=True)
-    subprocess.run([*base, '-X', feed.as_uri(), '--simulate', 'add', 'nicx-telemetry', 'luci-app-nicx-telemetry'], check=True)
+    print('Checking signed dependency archives in a temporary directory without running scripts.', flush=True)
+    subprocess.run([*base, '-X', feed.as_uri(), 'add', '--scripts=no', '--commit-hooks=no',
+                    'nicx-telemetry', 'luci-app-nicx-telemetry'], check=True)
