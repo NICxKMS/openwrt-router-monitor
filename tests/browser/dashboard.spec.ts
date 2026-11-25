@@ -21,6 +21,31 @@ test('owner can log in, inspect real-query pages and use mobile navigation', asy
     interfaces: [],
   };
 
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v1/usage') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total_devices: 1,
+          total_samples: 8640,
+          database_size_bytes: 14_680_064,
+          latest_observation_at: now,
+        }),
+      });
+      return;
+    }
+    if (path === '/api/v1/enroll/code') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 'ENROLL-ABCD-1234-EFGH', expires_at: iso(-10) }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
   await page.route('https://fixture.supabase.co/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = [];
@@ -154,6 +179,31 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     },
   };
 
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v1/usage') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total_devices: 1,
+          total_samples: 8640,
+          database_size_bytes: 14_680_064,
+          latest_observation_at: now,
+        }),
+      });
+      return;
+    }
+    if (path === '/api/v1/enroll/code') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 'ENROLL-ABCD-1234-EFGH', expires_at: iso(-10) }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
   await page.route('https://fixture.supabase.co/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -236,6 +286,7 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     await page.getByRole('link', { name: 'Diagnostics', exact: true }).click();
     await expect(page.getByText('Snapshot only')).toBeVisible();
     await page.locator('.record summary').first().click();
+    await page.getByText(/Installed packages/).click();
     await page.screenshot({ path: `test-results/desktop-rich-diagnostics.png`, fullPage: true });
 
     await page.getByRole('link', { name: 'Internet & ISP', exact: true }).click();
@@ -257,9 +308,126 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     await page.getByRole('button', { name: 'Switch to light theme' }).click();
     await page.getByRole('link', { name: 'Settings', exact: true }).click();
     await expect(page.getByLabel('Name for c_living_laptop')).toHaveValue('Living Room Laptop');
+    await page.getByRole('button', { name: 'Read measured project usage' }).click();
+    await expect(page.getByText('Database size bytes')).toBeVisible();
     await page.screenshot({ path: `test-results/desktop-light-settings.png`, fullPage: true });
+
+    await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+    await page.getByRole('button', { name: 'Revoke / delete' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Revoke uploads' })).toBeDisabled();
+    await page.screenshot({ path: `test-results/desktop-revoke-dialog.png`, fullPage: false });
+    await page.getByRole('button', { name: 'Close' }).click();
+
+    await page.getByRole('link', { name: 'Overview', exact: true }).click();
+    await page.getByRole('button', { name: 'Custom' }).click();
+    await expect(page.getByRole('button', { name: 'Apply to all pages' })).toBeVisible();
+    await page.screenshot({ path: `test-results/desktop-custom-range.png`, fullPage: false });
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    await page.getByRole('button', { name: 'Add router' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.screenshot({ path: `test-results/desktop-enrollment-dialog.png`, fullPage: false });
+    await page.getByRole('button', { name: 'Close' }).click();
+  }
+
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('link', { name: 'Memory', exact: true }).click();
+    await expect(page.getByText('Kernel memory categories')).toBeVisible();
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `test-results/mobile-rich-memory.png`, fullPage: true });
+
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('link', { name: 'Diagnostics', exact: true }).click();
+    await page.locator('.record summary').first().click();
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `test-results/mobile-rich-diagnostics.png`, fullPage: true });
+
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('link', { name: 'Firmware comparison', exact: true }).click();
+    await page.getByLabel('Baseline boot').selectOption(boot);
+    await page.getByLabel('Comparison boot').selectOption('20000000-0000-4000-8000-000000000002');
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    await expect(page.getByText(/Matched uptime:/)).toBeVisible();
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20000 });
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `test-results/mobile-rich-firmware.png`, fullPage: true });
+
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('link', { name: 'Logs', exact: true }).click();
+    await expect(page.getByText('nameserver 1.1.1.1 resumed normal response')).toBeVisible();
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `test-results/mobile-rich-logs.png`, fullPage: true });
+
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('link', { name: 'Alerts', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Threshold rules' })).toBeVisible();
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `test-results/mobile-rich-alerts.png`, fullPage: true });
+
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Read measured project usage' }).click();
+    await expect(page.getByText('Database size bytes')).toBeVisible();
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `test-results/mobile-rich-settings.png`, fullPage: true });
   }
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
+});
+
+test('offline stale banner and empty router state render cleanly', async ({ page }, testInfo) => {
+  const owner = '00000000-0000-4000-8000-000000000001';
+  const device = '10000000-0000-4000-8000-000000000001';
+  const boot = '20000000-0000-4000-8000-000000000001';
+  const nowMs = Date.now();
+  const iso = (offsetMin: number) => new Date(nowMs - offsetMin * 60000).toISOString();
+  const now = iso(0);
+  const stale = iso(15);
+  const user = { id: owner, aud: 'authenticated', role: 'authenticated', email: 'fixture@example.test', app_metadata: { provider: 'email' }, user_metadata: {}, created_at: now };
+  const token = [
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+    Buffer.from(JSON.stringify({ sub: owner, role: 'authenticated', exp: Math.floor(nowMs / 1000) + 3600, iat: Math.floor(nowMs / 1000) })).toString('base64url'),
+    'fixture-signature',
+  ].join('.');
+  let devicesBody: unknown[] = [
+    { id: device, name: 'JIDU6111 · Offline', model: 'JioRouter AX6000', last_seen_at: stale, created_at: iso(1440), revoked_at: null, config: { upload_interval: 30, sample_interval: 10 } },
+  ];
+  const sample = {
+    device_id: device, boot_id: boot, seq: 1, observed_at: stale, received_at: stale, bucket: stale, uptime_s: 3600,
+    cpu_pct: 12, load1: 0.2, mem_total_kb: 400000, mem_available_kb: 240000, temp_c: 48,
+    rx_bytes_delta: 10000, tx_bytes_delta: 5000, elapsed_s: 10, detail: {}, interfaces: [],
+  };
+
+  await page.route('https://fixture.supabase.co/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let body: unknown = [];
+    if (path.includes('/auth/v1/token')) body = { access_token: token, refresh_token: 'fixture-refresh-token', token_type: 'bearer', expires_in: 3600, user };
+    else if (path.includes('/auth/v1/user')) body = user;
+    else if (path.endsWith('/devices')) body = devicesBody;
+    else if (path.endsWith('/device_latest')) body = sample;
+    else if (path.endsWith('/metric_samples') || path.endsWith('/rpc/history')) body = [sample];
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Content-Range': '0-0/1' }, body: JSON.stringify(body) });
+  });
+  await page.routeWebSocket('wss://fixture.supabase.co/**', (socket) => socket.close());
+
+  await page.goto('/');
+  await page.getByLabel('Email address').fill('fixture@example.test');
+  await page.getByLabel('Password', { exact: true }).fill('fixture-password');
+  await page.getByRole('button', { name: 'Sign in securely' }).click();
+
+  await expect(page.getByText(/Router offline or delayed/i)).toBeVisible();
+  if (testInfo.project.name === 'desktop') {
+    await page.screenshot({ path: 'test-results/desktop-offline-banner.png', fullPage: false });
+  }
+
+  devicesBody = [];
+  await page.getByRole('button', { name: 'Refresh observations' }).click();
+  await expect(page.getByText('No router enrolled yet')).toBeVisible();
+  if (testInfo.project.name === 'desktop') {
+    await page.screenshot({ path: 'test-results/desktop-empty-routers.png', fullPage: false });
+  }
 });
