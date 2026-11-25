@@ -53,9 +53,9 @@ export function ActionButton({onAction,pendingLabel='Working…',successMessage,
   return <span className="action-control"><Button {...props} variant={variant} disabled={disabled||action.pending} aria-busy={action.pending} onClick={()=>void action.run({pending:pendingLabel,success:successMessage},onAction)}>{action.pending?<><Loader2 size={14} className="pending-spin"/>{pendingLabel}</>:children}</Button><ActionStatus action={action} compact/></span>;
 }
 const FormContext=createContext<ActionController|null>(null);
-export function ActionForm({children,onSubmit,pending,success,className,actionKey}:{children:ReactNode;onSubmit:(form:HTMLFormElement,context:ActionContext)=>PromiseLike<unknown>|unknown;pending:string;success:string;className?:string;actionKey?:string}) {
+export function ActionForm({children,onSubmit,pending,success,className,actionKey}:{children:ReactNode;onSubmit:(form:HTMLFormElement,context:ActionContext,values:FormData)=>PromiseLike<unknown>|unknown;pending:string;success:string;className?:string;actionKey?:string}) {
   const action=useAction(actionKey);
-  const submit=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=event.currentTarget;void action.run({pending,success},context=>onSubmit(form,context));};
+  const submit=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=event.currentTarget;const values=new FormData(form);void action.run({pending,success},context=>onSubmit(form,context,values));};
   return <FormContext.Provider value={action}><form className={className} onSubmit={submit} aria-busy={action.pending}><fieldset disabled={action.pending} className="action-fieldset">{children}</fieldset><ActionStatus action={action}/></form></FormContext.Provider>;
 }
 export function ActionSubmit({children,pendingLabel='Working…',...props}:ButtonHTMLAttributes<HTMLButtonElement>&{pendingLabel?:string}) {const action=useContext(FormContext);return <Button {...props} type="submit" disabled={props.disabled||action?.pending} aria-busy={action?.pending}>{action?.pending?<><Loader2 className="pending-spin" size={14}/>{pendingLabel}</>:children}</Button>;}
