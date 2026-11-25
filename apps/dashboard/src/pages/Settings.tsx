@@ -102,6 +102,7 @@ export function Settings() {
   const { device, zone, setZone, theme, setTheme, refresh, tick, refreshSeconds, setRefreshSeconds } = useMonitor();
   const deviceId = device!.id;
   const context = useRef({ deviceId, generation: 0 });
+  const appliedConfig = useRef<Row>({});
   useLayoutEffect(() => {
     context.current = { deviceId, generation: context.current.generation + 1 };
     return () => { context.current.generation++; };
@@ -122,6 +123,7 @@ export function Settings() {
       if (typeof value === 'number' && value > max) savedConfig[key] = max;
     }
     setName(device?.name || '');
+    appliedConfig.current = savedConfig;
     setConfig(savedConfig);
     setToken('');
     setConfirmation('');
@@ -221,7 +223,12 @@ export function Settings() {
           className="stack"
           pending="Saving collection permissions and intervals…"
           success="Cloud configuration saved. The router receives it with its next successful upload; local permissions still apply."
-          onSubmit={(_form, action) => mutate(path + '/config', cloudConfig(config), 'POST', action.signal)}
+          onSubmit={async (_form, action) => {
+            const generation = context.current.generation;
+            const changes = Object.fromEntries(Object.entries(cloudConfig(config)).filter(([key, value]) => !Object.is(value, appliedConfig.current[key])));
+            await mutate(path + '/config', changes, 'POST', action.signal);
+            if (context.current.generation === generation) appliedConfig.current = { ...appliedConfig.current, ...changes };
+          }}
         >
           <p className="form-section-title">Collection cadence</p>
           <div className="form-grid">
