@@ -25,9 +25,9 @@ Statuses describe evidence, not intent. A checked implementation item does not i
 - [ ] Free-tier usage observed over representative workload, retention adjusted to measured row sizes.
 
 ## Current evidence
-- 68 application/shared/Worker/dashboard tests pass, including Worker redirects and action feedback.
-- 20 PostgreSQL integration tests plus one schema test; exported host-agent sample enabled, no skips.
-- 42 router/host checks pass with native BusyBox and independently built jshn; signed release2 APK dependency closure verified.
+- 74 application/shared/Worker/dashboard tests pass, including review regression cases.
+- 27 PostgreSQL integration tests plus one schema test; exported host-agent sample enabled, no skips.
+- 46 router/host checks pass with native BusyBox and independently built jshn; signed release3 APK dependency closure verified.
 - Six desktop/mobile browser checks pass with clearly labeled test-only fixtures.
 - Phase 6 now has actual physical-router→Worker→PostgreSQL→dashboard acceptance, plus the local tests.
 - Phase 7 is partial; see limitations.md for optional collectors. Phase 9 has logs/retention/cloud alerts; recipient delivery is deferred. Phase 11 now has an initial actual-router CPU/RSS/buffer observation; controlled routing/Wi-Fi and peak/HTTPS attribution remain pending.

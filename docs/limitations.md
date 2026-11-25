@@ -4,10 +4,10 @@
 
 | Environment | Evidence | Still required |
 | --- | --- | --- |
-| Existing JIDU6111 community6.18.60 source/SDK |Both signed APK packages built; installed source/procd/rpcd/jshn/ath11k interfaces inspected |Actual installation, LuCI behavior, live counters and package-key compatibility |
-| Native BusyBox ash/awk1.37 host |28 router tests and actual host jshn sample generation |This is not the AArch64 router's RAM/CPU/forwarding measurement |
+| Existing JIDU6111 community6.18.60 source/SDK |Release2 installed/enrolled; real metrics, logs, LuCI feedback and snapshot receipts verified; release3 source/packages built |Release3 rollout and controlled forwarding/Wi-Fi tests |
+| Native BusyBox ash/awk1.37 host |46 router/host checks and actual host jshn sample generation |This is not the AArch64 router's RAM/CPU/forwarding measurement |
 | Other OpenWrt snapshots |Runtime detection and userspace-only recipes |Build against matching feeds and test capabilities; no blanket compatibility guarantee |
-| Hosted Supabase PostgreSQL17 |Migrations, RLS catalog, private Storage bucket, Realtime publication, successful Cron execution |Actual owner Auth, PostgREST ingestion, Storage HTTP, live subscriber and alert delivery tests |
+| Hosted Supabase PostgreSQL17 |Migrations, RLS catalog, private Storage bucket, Realtime publication, successful Cron execution |Storage HTTP archive delivery, live subscriber and recipient delivery tests (Telegram deferred) |
 | Local embedded PostgreSQL |Real roles/RLS/functions and correctness tests |Multi-connection lock races and provider behavior |
 
 ## Requested capabilities that remain unavailable or narrower

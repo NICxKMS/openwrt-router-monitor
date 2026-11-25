@@ -6,6 +6,15 @@ Version the web platform with semantic versions and the OpenWrt packages with `P
 
 Initial working platform: authenticated Worker ingestion, private PostgreSQL history, retention and alerts, responsive dashboard, and installable OpenWrt agent/LuCI packages. Actual JIDU6111 telemetry and logs have reached the hosted dashboard. See the acceptance checklist for remaining validation and optional collectors.
 
+### Pre-merge corrections / OpenWrt 1.0.0-r3
+
+- Preserve client-name form values before disabling controls; prevent stale log/diagnostic exports.
+- Confirm uncertain archive registration without deleting a potentially referenced object.
+- Publish network snapshots atomically and reject invalid cached JSON locally.
+- Report effective collection cadence so slower local/adaptive sampling preserves valid alert streaks.
+- Allow device deletion when threshold rules have active alerts.
+- Add migration007 without changing applied migrations. Apply it before rolling out release3.
+
 ### OpenWrt 1.0.0-r2
 
 - Visible pending, success and failure feedback in LuCI; duplicate action protection.
