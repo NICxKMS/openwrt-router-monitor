@@ -1,0 +1,6 @@
+# Shell scripts must remain runnable after Windows/WSL checkouts.
+* text=auto eol=lf
+*.apk binary
+*.ipk binary
+*.png binary
+*.gz binary
