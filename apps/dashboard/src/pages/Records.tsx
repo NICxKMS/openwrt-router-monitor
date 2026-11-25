@@ -303,9 +303,9 @@ export function Diagnostics() {
             const payload = object(row.payload);
             const link = links[id];
             const packagesText = typeof payload.packages === 'string' ? payload.packages : null;
-            const otherPayload = packagesText
-              ? Object.fromEntries(Object.entries(payload).filter(([k]) => k !== 'packages'))
-              : payload;
+            const otherPayload = Object.fromEntries(
+              Object.entries(payload).filter(([k]) => k !== 'packages' && k !== 'request_id'),
+            );
 
             return (
               <details className="record" key={id}>

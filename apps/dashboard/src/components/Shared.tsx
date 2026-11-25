@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Download } from 'lucide-react';
 import { useMonitor } from '../lib/data';
-import { bytes, date, download, fmt, mib, num, object, rate, relativeAge, rows, type Row, type Sample } from '../lib/model';
+import { bytes, date, download, fmt, mib, num, object, rate, relativeAge, rows, sentenceCase, type Row, type Sample } from '../lib/model';
 import { Card, Empty } from './ui/primitives';
 import { ActionButton } from './Actions';
 import type { ChartMode, CompareData } from './Chart';
@@ -71,7 +71,7 @@ export function HistoryChart({
         ? 'mem_available_mib'
         : metric;
 
-  let summaryStats: { min: number; max: number; avg: number; latest: number | null; unit: string } | null = null;
+  let summaryStats: { min: number; max: number; avg: number; latest: number | null; unit: string; txAvg?: number | null; txUnit?: string } | null = null;
   if (history.length) {
     if (activeMetric === 'cpu_pct') {
       const s = summarizeValues(history.map((d) => d.cpu_pct));
@@ -89,10 +89,12 @@ export function HistoryChart({
       if (s) summaryStats = { ...s, unit: ' °C' };
     } else if (activeMetric === 'network_mbps') {
       const s = summarizeValues(history.map((d) => rate(d.rx_bytes_delta, d.elapsed_s)));
-      if (s) summaryStats = { ...s, unit: ' Mbps Rx' };
+      const tx = summarizeValues(history.map((d) => rate(d.tx_bytes_delta, d.elapsed_s)));
+      if (s) summaryStats = { ...s, unit: ' Mbps Rx', txAvg: tx?.avg ?? null, txUnit: ' Mbps Tx' };
     } else if (activeMetric === 'network_mib') {
       const s = summarizeValues(history.map((d) => (typeof d.rx_bytes_delta === 'number' ? d.rx_bytes_delta / 1048576 : null)));
-      if (s) summaryStats = { ...s, unit: ' MiB Rx' };
+      const tx = summarizeValues(history.map((d) => (typeof d.tx_bytes_delta === 'number' ? d.tx_bytes_delta / 1048576 : null)));
+      if (s) summaryStats = { ...s, unit: ' MiB Rx', txAvg: tx?.avg ?? null, txUnit: ' MiB Tx' };
     }
   }
 
@@ -143,6 +145,11 @@ export function HistoryChart({
           {summaryStats.latest !== null && (
             <span>
               Latest <strong>{fmt(summaryStats.latest, summaryStats.unit)}</strong>
+            </span>
+          )}
+          {summaryStats.txAvg != null && (
+            <span>
+              Avg upload <strong>{fmt(summaryStats.txAvg, summaryStats.txUnit || '')}</strong>
             </span>
           )}
         </div>
@@ -199,7 +206,7 @@ export function Fields({ value }: { value: unknown }) {
         data={data}
         columns={keys.map((key) => ({
           key,
-          label: key.replaceAll('_', ' '),
+          label: sentenceCase(key),
           render: (v: unknown) =>
             v && typeof v === 'object' ? (
               <details>
@@ -220,10 +227,10 @@ export function Fields({ value }: { value: unknown }) {
     <dl className="fields">
       {entries.map(([k, v]) => (
         <div key={k}>
-          <dt>{k.replaceAll('_', ' ')}</dt>
+          <dt>{sentenceCase(k)}</dt>
           <dd>
             {v && typeof v === 'object' ? (
-              <details open={Array.isArray(v) && v.length < 5}>
+              <details open={Array.isArray(v) ? v.length < 5 : Object.keys(object(v)).length <= 8}>
                 <summary>{Array.isArray(v) ? `${v.length} entries` : 'View details'}</summary>
                 <Fields value={v} />
               </details>
@@ -324,12 +331,12 @@ export function Interfaces() {
               label: 'Tx rate',
               render: (v, row) => fmt(rate(v, row.elapsed_s), ' Mbps', 2),
             },
-            { key: 'rx_bytes', label: 'Total received', render: bytes },
-            { key: 'tx_bytes', label: 'Total sent', render: bytes },
+            { key: 'rx_bytes', label: 'Rx total', render: bytes },
+            { key: 'tx_bytes', label: 'Tx total', render: bytes },
             {
               key: 'reset',
-              label: 'Counter state',
-              render: (v) => <span className={`badge ${v ? 'warn' : ''}`}>{v ? 'Reset · rate unavailable' : 'Continuous'}</span>,
+              label: 'State',
+              render: (v) => <span className={`badge ${v ? 'warn' : ''}`}>{v ? 'Reset' : 'Continuous'}</span>,
             },
           ]}
         />

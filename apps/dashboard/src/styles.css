@@ -253,7 +253,7 @@ main { padding: 20px 24px 88px; max-width: 1760px; margin: auto; }
 .fields { margin: 0; }
 .fields > div { padding: 9px 0; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 1.7fr); gap: 14px; }
 .fields > div:last-child { border-bottom: 0; }
-.fields dt { font-size: 13px; color: var(--muted); text-transform: capitalize; overflow-wrap: anywhere; }
+.fields dt { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .fields dd { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
 .fields details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .fields details > .fields { margin-top: 8px; }
@@ -539,6 +539,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 3px; }
   .auth-card { padding: 22px 18px; }
   .auth-wrap { padding: 16px; }
   .probe-grid { grid-template-columns: 1fr; }
+  th, td { padding: 8px 9px; font-size: 12px; }
   .radio-measures { gap: 8px; }
   .radio-measures strong { font-size: 16px; }
   .action-activity { right: 10px; bottom: 10px; width: calc(100vw - 20px); max-height: 35vh; }

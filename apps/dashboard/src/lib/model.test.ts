@@ -16,9 +16,11 @@ import {
   retainedSampleEstimate,
   ruleCategoryLabel,
   safeCsv,
+  sentenceCase,
   serviceCheckLabel,
   toLocalDateTimeInput,
   uptime,
+  vmstatLabel,
   wifiBand,
   type Sample,
 } from './model';
@@ -131,5 +133,8 @@ describe('telemetry presentation helpers', () => {
     expect(ruleCategoryLabel('reachability:ipv4')).toBe('Reachability');
     expect(ALERT_METRICS.mem_available_kb.defaultOperator).toBe('lt');
     expect(toLocalDateTimeInput('2026-11-25T00:00:00Z')).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(sentenceCase('sample_interval')).toBe('Sample interval');
+    expect(vmstatLabel('pgmajfault')).toBe('Major page faults');
+    expect(vmstatLabel('oom_kill')).toBe('OOM kills');
   });
 });

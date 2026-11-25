@@ -204,7 +204,7 @@ function Login({ initialError }: { initialError: string }) {
               {initialError}
             </p>
           )}
-          <ActionSubmit pendingLabel="Signing in…">
+          <ActionSubmit variant="default" pendingLabel="Signing in…">
             Sign in securely <ArrowUpRight size={16} />
           </ActionSubmit>
         </ActionForm>
@@ -539,6 +539,22 @@ function Shell() {
               </Card>
             ) : (
               <>
+                {latest && range.live && !online && !device.revoked_at && page !== 'Settings' && (
+                  <div className="notice warn" role="status">
+                    <strong>Router offline or delayed:</strong> Last contact was{' '}
+                    {device.last_seen_at ? `${relativeAge(device.last_seen_at)} (${date(device.last_seen_at, zone, true)})` : 'never recorded'}.
+                    Expected upload cadence is every {Number(device.config.upload_interval || 30)}s. Values below show the last received snapshot, not
+                    live readings.
+                  </div>
+                )}
+                {device.revoked_at && page !== 'Settings' && (
+                  <div className="notice danger" role="status">
+                    <span>
+                      <strong>Device revoked:</strong> Ingestion was stopped on {date(device.revoked_at, zone, true)}. Historical records remain
+                      read-only.
+                    </span>
+                  </div>
+                )}
                 {!latest && page !== 'Settings' && (
                   <Notice>
                     {range.live

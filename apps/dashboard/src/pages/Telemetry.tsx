@@ -16,6 +16,7 @@ import {
   ruleCategoryLabel,
   serviceCheckLabel,
   uptime,
+  vmstatLabel,
   wifiBand,
   type Row,
 } from '../lib/model';
@@ -184,6 +185,15 @@ export function Overview() {
               <dt>Sample interval</dt>
               <dd className="mono">{fmt(latest?.elapsed_s, ' s', 2)}</dd>
             </div>
+            {object(detail.cadence).sample_s !== undefined && (
+              <div>
+                <dt>Effective cadence</dt>
+                <dd className="mono small">
+                  {String(object(detail.cadence).sample_s)}s sample, {String(object(detail.cadence).connectivity_s ?? '—')}s probes,{' '}
+                  {String(object(detail.cadence).detail_s ?? '—')}s detail
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Boot session</dt>
               <dd>
@@ -226,7 +236,7 @@ function QuickHealthSummary() {
       <Card title="Reachability & wireless summary" description="Quick snapshot from the latest extended collectors.">
         <div className="stack">
           {probeKeys.length > 0 ? (
-            <div className="kv-grid">
+            <div className="probe-grid">
               {probeKeys.map((key) => {
                 const probe = object(connectivity[key]);
                 return (
@@ -521,10 +531,11 @@ export function Memory() {
                   <div className="kv-grid">
                     {Object.entries(vmstat).map(([k, v]) => (
                       <div className="kv-box" key={k}>
-                        <span>{k}</span>
+                        <span>{vmstatLabel(k)}</span>
                         <strong style={k === 'oom_kill' && Number(v) > 0 ? { color: 'var(--red)' } : undefined}>
                           {num(v) !== null ? Number(v).toLocaleString() : String(v)}
                         </strong>
+                        <code className="small muted">{k}</code>
                       </div>
                     ))}
                   </div>
@@ -834,7 +845,7 @@ export function WiFi() {
               return (
                 <div className="tile-row" key={k}>
                   <div className="tile-row-top">
-                    <strong style={{ textTransform: 'uppercase' }}>{k}</strong>
+                    <strong>{capabilityLabel(k)}</strong>
                     <span className={`badge ${ok ? 'good' : ''}`}>{ok ? 'Available' : 'Unavailable'}</span>
                   </div>
                   {!ok && <span className="small muted">{val}</span>}

@@ -253,6 +253,7 @@ export default function Chart({
               },
               axisLabel: { color: palette.text, hideOverlap: true, formatter: (v: number) => durationShort(v) },
               axisLine: { lineStyle: { color: palette.axisLine } },
+              splitLine: { show: true, lineStyle: { color: palette.split } },
             }
           : {
               type: 'time',

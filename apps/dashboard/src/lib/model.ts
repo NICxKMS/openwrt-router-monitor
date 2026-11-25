@@ -364,5 +364,23 @@ export function capabilityLabel(key: string): string {
     dns_counters: 'DNS query counters',
     dns_queries: 'DNS query logging',
   };
-  return labels[key] || key.replaceAll('_', ' ');
+  return labels[key] || sentenceCase(key);
+}
+
+export function sentenceCase(key: string): string {
+  const spaced = key.replaceAll('_', ' ').trim();
+  return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : spaced;
+}
+
+export function vmstatLabel(key: string): string {
+  const labels: Record<string, string> = {
+    pgfault: 'Page faults',
+    pgmajfault: 'Major page faults',
+    pswpin: 'Pages swapped in',
+    pswpout: 'Pages swapped out',
+    oom_kill: 'OOM kills',
+    pgscan_kswapd: 'kswapd page scans',
+    pgsteal_kswapd: 'kswapd page steals',
+  };
+  return labels[key] || key;
 }

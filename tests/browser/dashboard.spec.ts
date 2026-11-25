@@ -38,6 +38,7 @@ test('owner can log in, inspect real-query pages and use mobile navigation', asy
   page.on('pageerror', (error) => errors.push(error.message));
 
   await page.goto('/');
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-login.png`, fullPage: true });
   await page.getByLabel('Email address').fill('fixture@example.test');
   await page.getByLabel('Password', { exact: true }).fill('fixture-password');
   await page.getByRole('button', { name: 'Sign in securely' }).click();
@@ -84,6 +85,15 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     last_seen_at: now, created_at: iso(1440), revoked_at: null,
     config: { upload_interval: 30, sample_interval: 10, billing_day: 1, monthly_quota_gb: 500 },
   };
+  const firmwareHistory = Array.from({ length: 12 }, (_, idx) => ({
+    uptime_s: 600 + idx * 300,
+    cpu_pct: 20 + (idx % 4) * 5,
+    mem_available_kb: 200000 - idx * 800,
+    temp_c: 53 + (idx % 3),
+    rx_bytes_delta: 3_000_000,
+    tx_bytes_delta: 600_000,
+    elapsed_s: 10,
+  }));
   const history = Array.from({ length: 24 }, (_, idx) => {
     const minsAgo = (23 - idx) * 15;
     const cpu = 18 + Math.round(Math.sin(idx / 3) * 14 + idx * 0.4);
@@ -155,7 +165,7 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     else if (path.endsWith('/devices')) body = [router];
     else if (path.endsWith('/device_latest')) body = latest;
     else if (path.endsWith('/rpc/history')) body = history;
-    else if (path.endsWith('/metric_samples')) body = isSingle ? history[history.length - 1] : history;
+    else if (path.endsWith('/metric_samples')) body = isSingle ? history[history.length - 1] : firmwareHistory;
     else if (path.endsWith('/boot_sessions')) body = [
       { device_id: device, boot_id: boot, first_seen_at: iso(1440), last_seen_at: now, inventory: { model: 'JIDU6111', release: 'OpenWrt SNAPSHOT 6.18.60', kernel: '6.18.60' } },
       { device_id: device, boot_id: '20000000-0000-4000-8000-000000000002', first_seen_at: iso(4320), last_seen_at: iso(1445), inventory: { model: 'JIDU6111', release: 'OpenWrt SNAPSHOT 6.18.59', kernel: '6.18.59' } },
@@ -174,6 +184,7 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
   page.on('pageerror', (error) => errors.push(error.message));
 
   await page.goto('/');
+  await page.screenshot({ path: `test-results/${testInfo.project.name}-login.png`, fullPage: true });
   await page.getByLabel('Email address').fill('fixture@example.test');
   await page.getByLabel('Password', { exact: true }).fill('fixture-password');
   await page.getByRole('button', { name: 'Sign in securely' }).click();
@@ -224,7 +235,29 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
 
     await page.getByRole('link', { name: 'Diagnostics', exact: true }).click();
     await expect(page.getByText('Snapshot only')).toBeVisible();
+    await page.locator('.record summary').first().click();
     await page.screenshot({ path: `test-results/desktop-rich-diagnostics.png`, fullPage: true });
+
+    await page.getByRole('link', { name: 'Internet & ISP', exact: true }).click();
+    await expect(page.getByText('Internet reachability')).toBeVisible();
+    await page.screenshot({ path: `test-results/desktop-rich-internet.png`, fullPage: true });
+
+    await page.getByRole('link', { name: 'DNS & adblock', exact: true }).click();
+    await expect(page.getByText('Ad blocking (AdBlock Fast)')).toBeVisible();
+    await page.screenshot({ path: `test-results/desktop-rich-dns.png`, fullPage: true });
+
+    await page.getByRole('link', { name: 'Firmware comparison', exact: true }).click();
+    await page.getByLabel('Baseline boot').selectOption(boot);
+    await page.getByLabel('Comparison boot').selectOption('20000000-0000-4000-8000-000000000002');
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    await expect(page.getByText(/Matched uptime:/)).toBeVisible();
+    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20000 });
+    await page.screenshot({ path: `test-results/desktop-rich-firmware.png`, fullPage: true });
+
+    await page.getByRole('button', { name: 'Switch to light theme' }).click();
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await expect(page.getByLabel('Name for c_living_laptop')).toHaveValue('Living Room Laptop');
+    await page.screenshot({ path: `test-results/desktop-light-settings.png`, fullPage: true });
   }
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -77,7 +77,7 @@ export function Enrollment() {
           Router name
           <Input required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Home · JIDU6111" />
         </label>
-        <ActionSubmit pendingLabel="Creating code…">Create enrollment code</ActionSubmit>
+        <ActionSubmit variant="default" pendingLabel="Creating code…">Create enrollment code</ActionSubmit>
       </ActionForm>
       {token && (
         <div className="secret">
