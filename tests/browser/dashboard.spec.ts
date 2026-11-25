@@ -291,7 +291,8 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
   await navigate(page, 'Network', mobile);
   await page.getByRole('button', { name: 'Previous time window' }).click();
   await expect(page.getByRole('button', { name: 'Return to Live' })).toBeVisible();
-  await expectChart(page, /^Internet throughput/);
+  await expectChart(page, /^Internet speed/);
+  await expectChart(page, /^Data consumed per interval/);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-light-network-history.png`, fullPage: true });
   await page.getByRole('button', { name: 'Return to Live' }).click();
 
@@ -315,6 +316,9 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     await expect(page.getByText('Snapshot only')).toBeVisible();
     await page.locator('.record summary').first().click();
     await page.getByText(/Installed packages/).click();
+    await expect(page.locator('.pkg-list')).toBeVisible();
+    await page.getByRole('button', { name: 'Refresh observations' }).click();
+    await expect(page.locator('.pkg-list')).toBeVisible();
     await page.screenshot({ path: `test-results/desktop-rich-diagnostics.png`, fullPage: true });
 
     await page.getByRole('link', { name: 'Internet & ISP', exact: true }).click();

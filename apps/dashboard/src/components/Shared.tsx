@@ -1,9 +1,27 @@
-import { lazy, Suspense, useState, type ReactNode } from 'react';
-import { Download } from 'lucide-react';
+import { lazy, Suspense, useCallback, useState, type ReactNode } from 'react';
+import { Download, RotateCcw } from 'lucide-react';
 import { useMonitor } from '../lib/data';
-import { bytes, date, download, fmt, mib, num, object, rate, relativeAge, rows, sentenceCase, type Row, type Sample } from '../lib/model';
-import { Card, Empty } from './ui/primitives';
+import {
+  bucketCadenceLabel,
+  bytes,
+  date,
+  download,
+  fmt,
+  formatMbps,
+  mib,
+  num,
+  object,
+  rate,
+  relativeAge,
+  rows,
+  sentenceCase,
+  sumTrafficBytes,
+  type Row,
+  type Sample,
+} from '../lib/model';
+import { Button, Card, Empty } from './ui/primitives';
 import { ActionButton } from './Actions';
+import { resetChartZoom } from '../lib/chartZoom';
 import type { ChartMode, CompareData } from './Chart';
 
 const Chart = lazy(() => import('./Chart'));
@@ -47,7 +65,6 @@ export function HistoryChart({
   unit = '%',
   description,
   height,
-  allowNetworkToggle = false,
   allowMemoryToggle = false,
 }: {
   metric: ChartMode | keyof Sample;
@@ -55,60 +72,123 @@ export function HistoryChart({
   unit?: string;
   description?: string;
   height?: number;
-  allowNetworkToggle?: boolean;
   allowMemoryToggle?: boolean;
 }) {
   const { history, latest } = useMonitor();
-  const [netMode, setNetMode] = useState<'network_mbps' | 'network_mib'>('network_mbps');
   const [memMode, setMemMode] = useState<'mem_available_mib' | 'mem_used_pct'>('mem_available_mib');
+  const [zoomScope, setZoomScope] = useState<string | null>(null);
   const memTotalKb = num(latest?.mem_total_kb);
 
-  const activeMetric: ChartMode | keyof Sample = allowNetworkToggle
-    ? netMode
-    : allowMemoryToggle && memTotalKb && memTotalKb > 0
+  const activeMetric: ChartMode | keyof Sample =
+    allowMemoryToggle && memTotalKb && memTotalKb > 0
       ? memMode
       : metric === 'mem_available_kb'
         ? 'mem_available_mib'
         : metric;
 
-  let summaryStats: { min: number; max: number; avg: number; latest: number | null; unit: string; txAvg?: number | null; txUnit?: string } | null = null;
+  const handleZoomChange = useCallback((zoomed: boolean, scopeKey: string) => {
+    setZoomScope(zoomed ? scopeKey : null);
+  }, []);
+
+  const cadence = bucketCadenceLabel(history);
+  const trafficTotals = activeMetric === 'network_mbps' || activeMetric === 'network_mib' ? sumTrafficBytes(history) : null;
+
+  let summaryContent: ReactNode = null;
   if (history.length) {
     if (activeMetric === 'cpu_pct') {
-      const s = summarizeValues(history.map((d) => d.cpu_pct));
-      if (s) summaryStats = { ...s, unit: '%' };
+      const s = summarizeValues(history.map((d) => num(d.cpu_pct)));
+      const peak = summarizeValues(history.map((d) => num(d.cpu_max) ?? num(d.cpu_pct)));
+      if (s) {
+        summaryContent = (
+          <>
+            <span>Min <strong>{fmt(s.min, '%')}</strong></span>
+            <span>Avg <strong>{fmt(s.avg, '%')}</strong></span>
+            <span>Max <strong>{fmt(peak?.max ?? s.max, '%')}</strong></span>
+            {s.latest !== null && <span>Latest <strong>{fmt(s.latest, '%')}</strong></span>}
+          </>
+        );
+      }
     } else if (activeMetric === 'mem_available_mib') {
-      const s = summarizeValues(history.map((d) => (typeof d.mem_available_kb === 'number' ? d.mem_available_kb / 1024 : null)));
-      if (s) summaryStats = { ...s, unit: ' MiB' };
+      const s = summarizeValues(history.map((d) => { const v = num(d.mem_available_kb); return v !== null ? v / 1024 : null; }));
+      if (s) {
+        summaryContent = (
+          <>
+            <span>Min <strong>{fmt(s.min, ' MiB')}</strong></span>
+            <span>Avg <strong>{fmt(s.avg, ' MiB')}</strong></span>
+            <span>Max <strong>{fmt(s.max, ' MiB')}</strong></span>
+            {s.latest !== null && <span>Latest <strong>{fmt(s.latest, ' MiB')}</strong></span>}
+          </>
+        );
+      }
     } else if (activeMetric === 'mem_used_pct' && memTotalKb) {
       const s = summarizeValues(
-        history.map((d) => (typeof d.mem_available_kb === 'number' ? ((memTotalKb - d.mem_available_kb) / memTotalKb) * 100 : null)),
+        history.map((d) => { const v = num(d.mem_available_kb); return v !== null ? ((memTotalKb - v) / memTotalKb) * 100 : null; }),
       );
-      if (s) summaryStats = { ...s, unit: '%' };
+      if (s) {
+        summaryContent = (
+          <>
+            <span>Min <strong>{fmt(s.min, '%')}</strong></span>
+            <span>Avg <strong>{fmt(s.avg, '%')}</strong></span>
+            <span>Max <strong>{fmt(s.max, '%')}</strong></span>
+            {s.latest !== null && <span>Latest <strong>{fmt(s.latest, '%')}</strong></span>}
+          </>
+        );
+      }
     } else if (activeMetric === 'temp_c') {
-      const s = summarizeValues(history.map((d) => d.temp_c));
-      if (s) summaryStats = { ...s, unit: ' °C' };
+      const s = summarizeValues(history.map((d) => num(d.temp_c)));
+      if (s) {
+        summaryContent = (
+          <>
+            <span>Min <strong>{fmt(s.min, ' °C')}</strong></span>
+            <span>Avg <strong>{fmt(s.avg, ' °C')}</strong></span>
+            <span>Max <strong>{fmt(s.max, ' °C')}</strong></span>
+            {s.latest !== null && <span>Latest <strong>{fmt(s.latest, ' °C')}</strong></span>}
+          </>
+        );
+      }
     } else if (activeMetric === 'network_mbps') {
-      const s = summarizeValues(history.map((d) => rate(d.rx_bytes_delta, d.elapsed_s)));
+      const rx = summarizeValues(history.map((d) => rate(d.rx_bytes_delta, d.elapsed_s)));
       const tx = summarizeValues(history.map((d) => rate(d.tx_bytes_delta, d.elapsed_s)));
-      if (s) summaryStats = { ...s, unit: ' Mbps Rx', txAvg: tx?.avg ?? null, txUnit: ' Mbps Tx' };
-    } else if (activeMetric === 'network_mib') {
-      const s = summarizeValues(history.map((d) => (typeof d.rx_bytes_delta === 'number' ? d.rx_bytes_delta / 1048576 : null)));
-      const tx = summarizeValues(history.map((d) => (typeof d.tx_bytes_delta === 'number' ? d.tx_bytes_delta / 1048576 : null)));
-      if (s) summaryStats = { ...s, unit: ' MiB Rx', txAvg: tx?.avg ?? null, txUnit: ' MiB Tx' };
+      if (rx || tx) {
+        summaryContent = (
+          <>
+            {rx && (
+              <>
+                <span>Avg ↓ <strong>{formatMbps(rx.avg)}</strong></span>
+                <span>Peak ↓ <strong>{formatMbps(rx.max)}</strong></span>
+                {rx.latest !== null && <span>Latest ↓ <strong>{formatMbps(rx.latest)}</strong></span>}
+              </>
+            )}
+            {tx && (
+              <>
+                <span>Avg ↑ <strong>{formatMbps(tx.avg)}</strong></span>
+                <span>Peak ↑ <strong>{formatMbps(tx.max)}</strong></span>
+              </>
+            )}
+            {trafficTotals && (
+              <span>Window volume <strong>{bytes(trafficTotals.total)}</strong></span>
+            )}
+          </>
+        );
+      }
+    } else if (activeMetric === 'network_mib' && trafficTotals) {
+      summaryContent = (
+        <>
+          <span>Downloaded (↓) <strong>{bytes(trafficTotals.rx)}</strong></span>
+          <span>Uploaded (↑) <strong>{bytes(trafficTotals.tx)}</strong></span>
+          <span>Combined total <strong>{bytes(trafficTotals.total)}</strong></span>
+          {cadence && <span>Resolution <strong>{cadence}</strong></span>}
+        </>
+      );
     }
   }
 
   const controls = (
     <div className="chart-actions">
-      {allowNetworkToggle && (
-        <div className="segmented compact-seg" role="group" aria-label="Network unit">
-          <button type="button" aria-pressed={netMode === 'network_mbps'} onClick={() => setNetMode('network_mbps')}>
-            Mbps
-          </button>
-          <button type="button" aria-pressed={netMode === 'network_mib'} onClick={() => setNetMode('network_mib')}>
-            MiB
-          </button>
-        </div>
+      {zoomScope && (
+        <Button type="button" variant="ghost" className="sm" onClick={() => resetChartZoom(zoomScope)}>
+          <RotateCcw size={13} /> Reset zoom
+        </Button>
       )}
       {allowMemoryToggle && memTotalKb && memTotalKb > 0 ? (
         <div className="segmented compact-seg" role="group" aria-label="Memory unit">
@@ -126,42 +206,42 @@ export function HistoryChart({
 
   const defaultDesc =
     activeMetric === 'network_mbps'
-      ? 'Average rate per bucket (bytes × 8 ÷ elapsed_s). Drag to zoom.'
-      : 'Observed history. Drag to zoom; gaps mark missing intervals.';
+      ? 'Transfer speed in Mbps. Line series show rate over time; drag or scroll to zoom.'
+      : activeMetric === 'network_mib'
+        ? 'Bytes transferred in each interval bucket. Bars show volume consumed, not speed.'
+        : 'Observed history. Drag to zoom; gaps mark missing intervals.';
 
   return (
     <Card title={title} description={description || defaultDesc} action={controls}>
-      {summaryStats && (
+      {summaryContent && (
         <div className="chart-summary" aria-label="Window summary">
-          <span>
-            Min <strong>{fmt(summaryStats.min, summaryStats.unit)}</strong>
-          </span>
-          <span>
-            Avg <strong>{fmt(summaryStats.avg, summaryStats.unit)}</strong>
-          </span>
-          <span>
-            Max <strong>{fmt(summaryStats.max, summaryStats.unit)}</strong>
-          </span>
-          {summaryStats.latest !== null && (
-            <span>
-              Latest <strong>{fmt(summaryStats.latest, summaryStats.unit)}</strong>
-            </span>
-          )}
-          {summaryStats.txAvg != null && (
-            <span>
-              Avg upload <strong>{fmt(summaryStats.txAvg, summaryStats.txUnit || '')}</strong>
-            </span>
-          )}
+          {summaryContent}
         </div>
       )}
       {history.length ? (
         <Suspense fallback={<div className="loading">Loading chart…</div>}>
-          <Chart data={history} metric={activeMetric} label={title} unit={unit} memTotalKb={memTotalKb} height={height} />
+          <Chart
+            data={history}
+            metric={activeMetric}
+            label={title}
+            unit={unit}
+            memTotalKb={memTotalKb}
+            height={height}
+            onZoomStateChange={handleZoomChange}
+          />
         </Suspense>
       ) : (
         <Empty title="No history in this window">Try a wider time range, or check that the agent is sending observations.</Empty>
       )}
     </Card>
+  );
+}
+
+export function DailyTrafficChart({ rows: dailyRows }: { rows: Row[] }) {
+  return (
+    <Suspense fallback={<div className="loading">Loading chart…</div>}>
+      <Chart data={[]} dailyRows={dailyRows} metric="daily_traffic" label="Daily internet consumption" height={220} group="daily" />
+    </Suspense>
   );
 }
 
@@ -302,11 +382,24 @@ export function DataTable({
   );
 }
 
-export function Interfaces() {
+export function Interfaces({ wanOnly = false }: { wanOnly?: boolean }) {
   const { latest, range } = useMonitor();
-  const data = rows(latest?.interfaces);
+  const allRows = rows(latest?.interfaces);
+  const filtered = wanOnly ? allRows.filter((i) => i.role === 'wan' || i.role === 'usbwan') : allRows;
+  const data = [...filtered].sort((a, b) => {
+    const rank = (role: unknown) => (role === 'wan' ? 0 : role === 'usbwan' ? 1 : role === 'lan' ? 2 : 3);
+    return rank(a.role) - rank(b.role);
+  });
+
   return (
-    <Card title="Interfaces" description="Ethernet WAN and USB WAN are measured separately; LAN is excluded from Internet totals.">
+    <Card
+      title={wanOnly ? 'WAN uplink interfaces' : 'Network interfaces'}
+      description={
+        wanOnly
+          ? 'Designated internet uplinks only. Session byte counters reflect kernel totals since boot or interface reset.'
+          : 'WAN uplinks drive Internet speed and consumption totals. LAN is tracked separately; session counters reflect totals since boot or reset.'
+      }
+    >
       {data.length ? (
         <DataTable
           data={data}
@@ -317,25 +410,33 @@ export function Interfaces() {
               label: 'Role',
               render: (v) => {
                 const r = String(v ?? 'other');
-                const label = r === 'wan' ? 'Ethernet WAN' : r === 'usbwan' ? 'USB WAN' : r === 'lan' ? 'LAN' : r;
+                const label = r === 'wan' ? 'Ethernet WAN' : r === 'usbwan' ? 'USB WAN' : r === 'lan' ? 'LAN (excluded)' : r;
                 return <span className={`badge ${r === 'wan' || r === 'usbwan' ? 'good' : ''}`}>{label}</span>;
               },
             },
             {
               key: 'rx_delta',
-              label: 'Rx rate',
-              render: (v, row) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{fmt(rate(v, row.elapsed_s), ' Mbps', 2)}</span>,
+              label: 'Rx speed',
+              render: (v, row) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{formatMbps(rate(v, row.elapsed_s))}</span>,
             },
             {
               key: 'tx_delta',
-              label: 'Tx rate',
-              render: (v, row) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{fmt(rate(v, row.elapsed_s), ' Mbps', 2)}</span>,
+              label: 'Tx speed',
+              render: (v, row) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{formatMbps(rate(v, row.elapsed_s))}</span>,
             },
-            { key: 'rx_bytes', label: 'Rx total', render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span> },
-            { key: 'tx_bytes', label: 'Tx total', render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span> },
+            {
+              key: 'rx_bytes',
+              label: 'Session Rx (boot)',
+              render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span>,
+            },
+            {
+              key: 'tx_bytes',
+              label: 'Session Tx (boot)',
+              render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span>,
+            },
             {
               key: 'reset',
-              label: 'State',
+              label: 'Counter state',
               render: (v) => <span className={`badge ${v ? 'warn' : ''}`}>{v ? 'Reset' : 'Continuous'}</span>,
             },
           ]}

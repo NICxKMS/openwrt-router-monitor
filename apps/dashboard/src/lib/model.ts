@@ -82,10 +82,63 @@ export function mib(kb: unknown, digits = 1): string {
   return n === null ? '—' : `${(n / 1024).toLocaleString(undefined, { maximumFractionDigits: digits })} MiB`;
 }
 
-export const rate = (delta: unknown, seconds: unknown): number | null =>
-  typeof delta === 'number' && Number.isFinite(delta) && typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
-    ? (delta * 8) / seconds / 1e6
-    : null;
+export const rate = (delta: unknown, seconds: unknown): number | null => {
+  const d = num(delta);
+  const s = num(seconds);
+  return d !== null && s !== null && s > 0 ? (d * 8) / s / 1e6 : null;
+};
+
+export function formatMbps(v: number | null): string {
+  if (v === null || !Number.isFinite(v)) return '—';
+  if (v === 0) return '0 Mbps';
+  if (v > 0 && v < 0.01) return `${fmt(v * 1000, ' Kbps', 0)}`;
+  if (v < 1) return fmt(v, ' Mbps', 2);
+  return fmt(v, ' Mbps', 1);
+}
+
+export function sumTrafficBytes(samples: Sample[]): { rx: number; tx: number; total: number } | null {
+  let rx = 0;
+  let tx = 0;
+  let seen = false;
+  for (const s of samples) {
+    const r = num(s.rx_bytes_delta);
+    const t = num(s.tx_bytes_delta);
+    if (r !== null) {
+      rx += r;
+      seen = true;
+    }
+    if (t !== null) {
+      tx += t;
+      seen = true;
+    }
+  }
+  return seen ? { rx, tx, total: rx + tx } : null;
+}
+
+export function bucketCadenceLabel(samples: Sample[]): string {
+  if (!samples.length) return '';
+  const hasRollup = samples.some((s) => (num(s.sample_count) ?? 1) > 1);
+  if (!hasRollup && samples.length > 1) {
+    const times = samples
+      .map((s) => Date.parse(String(s.bucket || s.observed_at || s.received_at)))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    const diffs = times.slice(1).map((t, i) => (t - times[i]) / 1000).filter((d) => d > 0);
+    if (diffs.length) {
+      const median = diffs.sort((a, b) => a - b)[Math.floor(diffs.length / 2)];
+      return median < 55 ? `${Math.round(median)}s raw samples` : `${durationShort(median)} samples`;
+    }
+    return 'Raw samples';
+  }
+  const times = samples
+    .map((s) => Date.parse(String(s.bucket || s.observed_at || s.received_at)))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const diffs = times.slice(1).map((t, i) => (t - times[i]) / 1000).filter((d) => d > 0);
+  const median = diffs.length ? diffs.sort((a, b) => a - b)[Math.floor(diffs.length / 2)] : null;
+  if (median !== null && median >= 55) return `${durationShort(median)} buckets`;
+  return hasRollup ? 'Aggregated buckets' : 'Raw samples';
+}
 
 export function date(v: unknown, zone: string, full = false): string {
   if (typeof v !== 'string' || !Number.isFinite(Date.parse(v))) return '—';
@@ -101,6 +154,22 @@ export function compactAxisTime(value: unknown, zone: string, spanMs = 6 * 36000
   const time = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
   if (!Number.isFinite(time)) return '';
   const d = new Date(time);
+  if (spanMs <= 20 * 60000) {
+    return new Intl.DateTimeFormat('en-IN', {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(d);
+  }
+  if (spanMs > 14 * 86400000) {
+    return new Intl.DateTimeFormat('en-IN', {
+      timeZone: zone,
+      day: 'numeric',
+      month: 'short',
+    }).format(d);
+  }
   if (spanMs > 36 * 3600000) {
     return new Intl.DateTimeFormat('en-IN', {
       timeZone: zone,

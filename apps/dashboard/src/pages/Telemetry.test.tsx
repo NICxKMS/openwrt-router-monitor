@@ -251,6 +251,29 @@ describe('structured telemetry views', () => {
     expect(screen.getByText('124 GB used of 200 GB')).toBeInTheDocument();
   });
 
+  it('separates speed and consumed traffic stats on Network without flashing quota loading on poll', async () => {
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    fixture.monitor = {
+      ...fixture.monitor,
+      device: { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200, billing_day: 1 } },
+      history: [
+        { ...sample, rx_bytes_delta: 5_242_880, tx_bytes_delta: 1_048_576, elapsed_s: 10 },
+        { ...sample, rx_bytes_delta: 5_242_880, tx_bytes_delta: 1_048_576, elapsed_s: 10 },
+      ],
+    };
+    fixture.bandwidthDaily = [{ device_id: 'dev-1', day: '2026-11-25', interface_name: 'eth0', role: 'wan', rx_bytes: 2_000_000_000, tx_bytes: 0 }];
+    const { rerender } = render(<Network />);
+    expect(await screen.findByText('2 GB used of 200 GB')).toBeInTheDocument();
+    expect(screen.getAllByText('12 MiB').length).toBeGreaterThan(0);
+    expect(screen.getByText('Internet speed (Rx & Tx)')).toBeInTheDocument();
+    expect(screen.getByText('Data consumed per interval')).toBeInTheDocument();
+
+    fixture.monitor = { ...fixture.monitor, tick: 1 };
+    rerender(<Network />);
+    expect(screen.queryByText('Loading billing-cycle quota usage…')).toBeNull();
+    expect(screen.getByText('2 GB used of 200 GB')).toBeInTheDocument();
+  });
+
   it('hides the previous quota usage from the first render for another router', async () => {
     vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
     const router = { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200 } };

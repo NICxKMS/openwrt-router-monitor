@@ -8,6 +8,7 @@ import {
   date,
   durationShort,
   fmt,
+  formatMbps,
   matchUptimeWindows,
   memoryCategories,
   mib,
@@ -18,6 +19,7 @@ import {
   safeCsv,
   sentenceCase,
   serviceCheckLabel,
+  sumTrafficBytes,
   toLocalDateTimeInput,
   uptime,
   vmstatLabel,
@@ -57,6 +59,14 @@ describe('honest measurement formatting', () => {
   it('uses the selected timezone rather than the browser timezone', () => {
     expect(date('2026-11-25T00:00:00Z', 'Asia/Kolkata')).toContain('05:30');
     expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 6 * 3600000)).toBe('05:30');
+    expect(compactAxisTime(Date.parse('2026-11-25T00:00:15Z'), 'Asia/Kolkata', 15 * 60000)).toBe('05:30:15');
+    expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 30 * 86400000)).toBe('25 Nov');
+    expect(rate('12500000', '10')).toBe(10);
+    expect(formatMbps(0.005)).toBe('5 Kbps');
+    expect(formatMbps(0.42)).toBe('0.42 Mbps');
+    expect(formatMbps(2)).toBe('2 Mbps');
+    expect(sumTrafficBytes([{ rx_bytes_delta: null, tx_bytes_delta: null } as Sample])).toBeNull();
+    expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: 100 } as Sample])).toEqual({ rx: 300, tx: 100, total: 400 });
   });
 });
 

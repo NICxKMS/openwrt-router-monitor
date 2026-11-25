@@ -6,6 +6,7 @@ import {
   capabilityLabel,
   date,
   fmt,
+  formatMbps,
   memoryCategories,
   mib,
   num,
@@ -16,6 +17,8 @@ import {
   ruleCategoryLabel,
   sentenceCase,
   serviceCheckLabel,
+  sumTrafficBytes,
+  timeRangeKey,
   uptime,
   vmstatLabel,
   wifiBand,
@@ -24,6 +27,7 @@ import {
 import { Card, Empty, Notice, QueryState } from '../components/ui/primitives';
 import {
   CollectorLag,
+  DailyTrafficChart,
   DataTable,
   DetailCard,
   Fields,
@@ -69,6 +73,7 @@ export function Overview() {
   const coreCount = Object.keys(object(object(detail.cpu).cores)).length;
   const hasTempHistory = tempC !== null || history.some((s) => num(s.temp_c) !== null);
   const criticalAlerts = openAlerts.some((a) => a.severity === 'critical');
+  const windowTraffic = sumTrafficBytes(history);
 
   return (
     <>
@@ -139,9 +144,13 @@ export function Overview() {
           tone={memTone(memPct)}
         />
         <Stat
-          label="Internet throughput"
-          value={rxMbps !== null ? `↓ ${fmt(rxMbps, ' Mbps')}` : '—'}
-          sub={txMbps !== null ? `↑ ${fmt(txMbps, ' Mbps')} upload · WAN uplinks` : 'Designated internet uplinks only'}
+          label="Internet speed"
+          value={rxMbps !== null ? `↓ ${formatMbps(rxMbps)}` : '—'}
+          sub={
+            txMbps !== null
+              ? `↑ ${formatMbps(txMbps)}${windowTraffic ? ` · Window: ${bytes(windowTraffic.total)}` : ''}`
+              : 'Designated internet uplinks only'
+          }
         />
         <Stat
           label="Uptime & thermal"
@@ -157,13 +166,7 @@ export function Overview() {
       </div>
 
       <div className="two-col">
-        <HistoryChart
-          metric="network_mbps"
-          title="Internet throughput"
-          unit=" Mbps"
-          height={240}
-          allowNetworkToggle
-        />
+        <HistoryChart metric="network_mbps" title="Internet speed" unit=" Mbps" height={240} />
         {hasTempHistory ? (
           <HistoryChart metric="temp_c" title="Thermal sensor" unit=" °C" height={240} />
         ) : (
@@ -595,7 +598,7 @@ export function Memory() {
 }
 
 async function readBillingCycleBytes(deviceId: string, cycleStart: string, asOfDay: string) {
-  const pageSize = 100;
+  const pageSize = 1000;
   let total = 0;
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await db!
@@ -615,22 +618,25 @@ async function readBillingCycleBytes(deviceId: string, cycleStart: string, asOfD
 }
 
 export function Network() {
-  const { device, tick, range, latest } = useMonitor();
+  const { device, tick, range, latest, history } = useMonitor();
+  const rangeIdentity = timeRangeKey(range);
   const q = useQuery(
     () =>
       db!
         .from('bandwidth_daily')
-        .select('*')
+        .select('device_id,day,interface_name,role,rx_bytes,tx_bytes,coverage_s')
         .eq('device_id', device!.id)
         .gte('day', range.from.slice(0, 10))
         .lte('day', range.to.slice(0, 10))
         .order('day', { ascending: false })
-        .limit(90),
-    [device?.id, tick, range],
+        .limit(360),
+    [device?.id, rangeIdentity],
+    [range.live ? tick : 0, range.from, range.to],
   );
 
   const rxMbps = rate(latest?.rx_bytes_delta, latest?.elapsed_s);
   const txMbps = rate(latest?.tx_bytes_delta, latest?.elapsed_s);
+  const windowTraffic = sumTrafficBytes(history);
   const interfaces = rows(latest?.interfaces);
   const uplinks = interfaces.filter((i) => i.role === 'wan' || i.role === 'usbwan');
 
@@ -648,42 +654,60 @@ export function Network() {
       device && quotaGb > 0
         ? readBillingCycleBytes(device.id, cycleStartStr, asOfDay)
         : Promise.resolve({ data: null, error: null }),
-    [device?.id, tick, quotaGb, cycleStartStr, asOfDay],
+    [device?.id, quotaGb, cycleStartStr, asOfDay],
+    [range.live ? tick : 0],
   );
 
   const cycleReady = cycleQuery.isCurrent && !cycleQuery.loading && !cycleQuery.error;
   const cycleBytes = cycleReady ? cycleQuery.data : null;
   const quotaPct = quotaGb > 0 && cycleBytes !== null ? (cycleBytes / (quotaGb * 1e9)) * 100 : null;
+  const todayUtc = now.toISOString().slice(0, 10);
+  const todayBytes = dailyRows
+    .filter((r) => String(r.day) === todayUtc)
+    .reduce<{ rx: number; tx: number; seen: boolean }>(
+      (acc, r) => ({
+        rx: acc.rx + (num(r.rx_bytes) ?? 0),
+        tx: acc.tx + (num(r.tx_bytes) ?? 0),
+        seen: true,
+      }),
+      { rx: 0, tx: 0, seen: false },
+    );
 
   return (
     <>
       <div className="stats">
-        <Stat label="Download rate (Rx)" value={fmt(rxMbps, ' Mbps', 2)} sub="Designated WAN uplinks" />
-        <Stat label="Upload rate (Tx)" value={fmt(txMbps, ' Mbps', 2)} sub="Designated WAN uplinks" />
+        <Stat label="Download speed (Rx)" value={formatMbps(rxMbps)} sub={uplinks.length ? uplinks.map((u) => String(u.name)).join(', ') : 'Designated WAN uplinks'} />
+        <Stat label="Upload speed (Tx)" value={formatMbps(txMbps)} sub={latest?.elapsed_s ? `Over ${fmt(latest.elapsed_s, ' s', 1)} interval` : 'Designated WAN uplinks'} />
         <Stat
-          label="Latest interval volume"
-          value={
-            latest?.rx_bytes_delta != null || latest?.tx_bytes_delta != null
-              ? bytes((latest?.rx_bytes_delta ?? 0) + (latest?.tx_bytes_delta ?? 0))
-              : '—'
-          }
-          sub={latest?.elapsed_s ? `Over ${fmt(latest.elapsed_s, ' s', 1)}` : 'Interval unavailable'}
+          label="Consumed in window"
+          value={windowTraffic ? bytes(windowTraffic.total) : '—'}
+          sub={windowTraffic ? `↓ ${bytes(windowTraffic.rx)} · ↑ ${bytes(windowTraffic.tx)}` : 'No WAN deltas in window'}
         />
-        <Stat
-          label="Active uplinks"
-          value={uplinks.length || '—'}
-          sub={uplinks.map((u) => String(u.name)).join(', ') || 'No WAN uplink detected'}
-        />
+        {quotaGb > 0 ? (
+          <Stat
+            label="Billing cycle consumed"
+            value={cycleBytes !== null ? fmt(cycleBytes / 1e9, ' GB', 2) : '—'}
+            sub={cycleBytes !== null ? `${fmt(Math.max(0, quotaGb - cycleBytes / 1e9), ' GB', 2)} left of ${quotaGb} GB` : `Since ${cycleStartStr}`}
+            tone={quotaPct !== null && quotaPct >= 95 ? 'bad' : quotaPct !== null && quotaPct >= 80 ? 'warn' : 'default'}
+          />
+        ) : (
+          <Stat
+            label="Today UTC consumed"
+            value={todayBytes.seen ? bytes(todayBytes.rx + todayBytes.tx) : String(uplinks.length || '—')}
+            sub={todayBytes.seen ? `↓ ${bytes(todayBytes.rx)} · ↑ ${bytes(todayBytes.tx)}` : uplinks.map((u) => String(u.name)).join(', ') || 'No WAN uplink detected'}
+          />
+        )}
       </div>
 
-      <HistoryChart metric="network_mbps" title="Internet throughput (Rx & Tx)" unit=" Mbps" allowNetworkToggle />
-
-      <Interfaces />
+      <div className="two-col">
+        <HistoryChart metric="network_mbps" title="Internet speed (Rx & Tx)" unit=" Mbps" />
+        <HistoryChart metric="network_mib" title="Data consumed per interval" unit=" MiB" />
+      </div>
 
       {quotaGb > 0 && (
         <Card
           title="Monthly internet quota"
-          description={`Observed WAN traffic since UTC billing cycle start (${cycleStartStr}).`}
+          description={`Observed WAN traffic since UTC billing cycle start (${cycleStartStr}). Uses decimal GB (10⁹ B) for ISP quota parity.`}
         >
           <div className="tile-row-top" style={{ marginBottom: 10 }}>
             <strong>{fmt(cycleBytes === null ? null : cycleBytes / 1e9, ' GB', 2)} used of {quotaGb} GB</strong>
@@ -703,65 +727,73 @@ export function Network() {
         </Card>
       )}
 
-      <Card title="Daily internet usage" description="Observed bytes per UTC day, not your ISP bill. Incomplete coverage understates totals.">
+      <Card
+        title="Daily internet usage"
+        description="Observed bytes per UTC day across WAN uplinks. Incomplete coverage understates totals."
+      >
         <QueryState
           {...q}
           empty={!dailyRows.length}
           emptyTitle="No daily traffic totals"
           emptyMessage="Daily WAN byte totals appear after the router uploads observations in this range."
         >
-          <DataTable
-            data={dailyRows}
-            columns={[
-              { key: 'day', label: 'Day (UTC)', render: (v) => <code style={{ whiteSpace: 'nowrap' }}>{String(v ?? '—')}</code> },
-              { key: 'interface_name', label: 'Interface', render: (v) => <code>{String(v ?? '—')}</code> },
-              {
-                key: 'role',
-                label: 'Uplink',
-                render: (v) => <span className="badge good">{v === 'usbwan' ? 'USB WAN' : 'Ethernet WAN'}</span>,
-              },
-              { key: 'rx_bytes', label: 'Received', render: (v) => <span className="mono">{bytes(v)}</span> },
-              { key: 'tx_bytes', label: 'Sent', render: (v) => <span className="mono">{bytes(v)}</span> },
-              {
-                key: 'total',
-                label: 'Total',
-                render: (_v, row) => (
-                  <span className="mono">
-                    {row.rx_bytes != null || row.tx_bytes != null ? bytes((num(row.rx_bytes) ?? 0) + (num(row.tx_bytes) ?? 0)) : '—'}
-                  </span>
-                ),
-              },
-              {
-                key: 'coverage_s',
-                label: 'Coverage',
-                render: (v) => {
-                  const sec = num(v);
-                  const hrs = sec !== null ? sec / 3600 : null;
-                  return (
-                    <span className="mono">
-                      {hrs !== null ? `${fmt(hrs, ' h')} (${fmt(Math.min(100, (sec! / 86400) * 100), '%', 0)})` : '—'}
-                    </span>
-                  );
+          <div className="stack">
+            <DailyTrafficChart rows={dailyRows} />
+            <DataTable
+              data={dailyRows}
+              columns={[
+                { key: 'day', label: 'Day (UTC)', render: (v) => <code style={{ whiteSpace: 'nowrap' }}>{String(v ?? '—')}</code> },
+                { key: 'interface_name', label: 'Interface', render: (v) => <code>{String(v ?? '—')}</code> },
+                {
+                  key: 'role',
+                  label: 'Uplink',
+                  render: (v) => <span className="badge good">{v === 'usbwan' ? 'USB WAN' : 'Ethernet WAN'}</span>,
                 },
-              },
-            ]}
-          />
+                { key: 'rx_bytes', label: 'Downloaded', render: (v) => <span className="mono">{bytes(v)}</span> },
+                { key: 'tx_bytes', label: 'Uploaded', render: (v) => <span className="mono">{bytes(v)}</span> },
+                {
+                  key: 'total',
+                  label: 'Total',
+                  render: (_v, row) => (
+                    <span className="mono">
+                      {row.rx_bytes != null || row.tx_bytes != null ? bytes((num(row.rx_bytes) ?? 0) + (num(row.tx_bytes) ?? 0)) : '—'}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'coverage_s',
+                  label: 'Coverage',
+                  render: (v) => {
+                    const sec = num(v);
+                    const hrs = sec !== null ? sec / 3600 : null;
+                    return (
+                      <span className="mono">
+                        {hrs !== null ? `${fmt(hrs, ' h')} (${fmt(Math.min(100, (sec! / 86400) * 100), '%', 0)})` : '—'}
+                      </span>
+                    );
+                  },
+                },
+              ]}
+            />
+          </div>
         </QueryState>
       </Card>
+
+      <Interfaces />
     </>
   );
 }
 
 export function WiFi() {
-  const { latest, device, tick } = useMonitor();
+  const { latest, device } = useMonitor();
   const detail = object(latest?.detail);
   const wifi = object(detail.wifi);
   const radios = rows(wifi.radios);
   const capabilities = object(detail.capabilities);
 
   const clientNamesQuery = useQuery(
-    () => db!.from('client_names').select('*').eq('device_id', device!.id).order('client_id').limit(200),
-    [device?.id, tick],
+    () => db!.from('client_names').select('device_id,client_id,name').eq('device_id', device!.id).order('client_id').limit(200),
+    [device?.id],
   );
   const nameByClientId = new Map<string, string>(
     (clientNamesQuery.data || []).map((row: Row) => [String(row.client_id), String(row.name)]),
@@ -923,15 +955,50 @@ export function WiFi() {
 }
 
 export function Internet() {
+  const { latest } = useMonitor();
+  const connectivity = object(object(latest?.detail).connectivity);
+  const probeEntries = (['ipv4', 'ipv6', 'gateway', 'dns'] as const)
+    .map((k) => [k, object(connectivity[k])] as const)
+    .filter(([, p]) => Object.keys(p).length > 0);
+  const reachableCount = probeEntries.filter(([, p]) => p.reachable === true).length;
+  const rxMbps = rate(latest?.rx_bytes_delta, latest?.elapsed_s);
+  const txMbps = rate(latest?.tx_bytes_delta, latest?.elapsed_s);
+  const uplinks = rows(latest?.interfaces).filter((i) => i.role === 'wan' || i.role === 'usbwan');
+
   return (
     <>
+      <div className="stats">
+        <Stat
+          label="Probe health"
+          value={probeEntries.length ? `${reachableCount} / ${probeEntries.length}` : '—'}
+          sub={probeEntries.length ? 'Probes reachable' : 'Optional probes disabled'}
+          tone={probeEntries.length && reachableCount < probeEntries.length ? 'warn' : probeEntries.length ? 'good' : 'default'}
+        />
+        <Stat
+          label="WAN Download (Rx)"
+          value={formatMbps(rxMbps)}
+          sub={uplinks.length ? uplinks.map((u) => String(u.name)).join(', ') : 'Designated WAN uplinks'}
+        />
+        <Stat
+          label="WAN Upload (Tx)"
+          value={formatMbps(txMbps)}
+          sub={latest?.elapsed_s ? `Over ${fmt(latest.elapsed_s, ' s', 1)} interval` : 'Designated WAN uplinks'}
+        />
+        <Stat
+          label="Active WAN uplinks"
+          value={uplinks.length || '—'}
+          sub={uplinks.map((u) => String(u.name)).join(', ') || 'No WAN uplink detected'}
+        />
+      </div>
+
       <Notice>
-        Only designated WAN interfaces contribute to Internet totals. Ethernet and USB uplinks retain separate counters; LAN traffic is excluded.
-        No active speed test runs from this dashboard.
+        Compare Gateway latency with IPv4/IPv6 latency to tell local link congestion apart from upstream ISP issues. For traffic volume and monthly quota totals, see the{' '}
+        <a href="#Network" style={{ color: 'var(--accent)', fontWeight: 600 }}>Network</a> page. No active speed test runs from this dashboard.
       </Notice>
+
       <Connectivity />
-      <HistoryChart metric="network_mbps" title="Internet throughput (Rx & Tx)" unit=" Mbps" allowNetworkToggle />
-      <Interfaces />
+      <HistoryChart metric="network_mbps" title="WAN link speed (Rx & Tx)" unit=" Mbps" />
+      <Interfaces wanOnly />
     </>
   );
 }
@@ -1049,7 +1116,7 @@ export function DNS() {
 }
 
 function Identity() {
-  const { device, tick } = useMonitor();
+  const { device, latest } = useMonitor();
   const q = useQuery(
     () =>
       db!
@@ -1058,7 +1125,7 @@ function Identity() {
         .eq('device_id', device!.id)
         .order('first_seen_at', { ascending: false })
         .limit(1),
-    [device?.id, tick],
+    [device?.id, latest?.boot_id],
   );
   return (
     <Card title="System identity" description="Reported hardware and firmware inventory from the most recent boot.">
