@@ -124,8 +124,8 @@ export function HistoryChart({
 
   const defaultDesc =
     activeMetric === 'network_mbps'
-      ? 'Average rate per bucket (bytes × 8 ÷ elapsed_s) · drag to zoom · missing observations stay empty'
-      : 'Observed history · drag to zoom · missing observations stay empty';
+      ? 'Average rate per bucket (bytes × 8 ÷ elapsed_s). Drag to zoom.'
+      : 'Observed history. Drag to zoom; gaps mark missing intervals.';
 
   return (
     <Card title={title} description={description || defaultDesc} action={controls}>

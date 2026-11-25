@@ -165,8 +165,8 @@ export function Settings() {
             <label>
               Appearance
               <select value={theme} onChange={(e) => setTheme(e.target.value)}>
-                <option value="dark">Dark · midnight instrument</option>
-                <option value="light">Light · daylight instrument</option>
+                <option value="dark">Dark (Obsidian)</option>
+                <option value="light">Light (Architectural)</option>
               </select>
             </label>
           </div>

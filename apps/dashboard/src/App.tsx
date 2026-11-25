@@ -40,21 +40,21 @@ import { Alerts, Diagnostics, Firmware, Logs } from './pages/Records';
 import { Enrollment, Settings } from './pages/Settings';
 
 const pages = [
-  { name: 'Overview', group: 'TELEMETRY', subtitle: 'Router health, active alerts, and core vitals at a glance.', icon: LayoutDashboard, component: Overview },
-  { name: 'CPU & system', group: 'TELEMETRY', subtitle: 'Processor load, per-core utilization, processes, thermals, and kernel limits.', icon: Cpu, component: CPU },
-  { name: 'Memory', group: 'TELEMETRY', subtitle: 'RAM utilization, kernel reclaimable pools, PSI pressure, and VM events.', icon: Database, component: Memory },
-  { name: 'Network', group: 'TELEMETRY', subtitle: 'Uplink throughput, interface counters, and daily WAN bandwidth.', icon: Network, component: NetworkPage },
-  { name: 'Wi-Fi', group: 'TELEMETRY', subtitle: 'Radio channel survey, signal quality, and anonymized client stations.', icon: Wifi, component: WiFi },
-  { name: 'Internet & ISP', group: 'TELEMETRY', subtitle: 'Router-originated IPv4, IPv6, gateway, and DNS reachability probes.', icon: Globe, component: Internet },
-  { name: 'DNS & adblock', group: 'TELEMETRY', subtitle: 'Resolver health, adblock service checks, and daemon status.', icon: ShieldCheck, component: DNS },
-  { name: 'Logs', group: 'INVESTIGATION', subtitle: 'Grouped system and kernel logs with severity and service filters.', icon: Terminal, component: Logs },
-  { name: 'Diagnostics', group: 'INVESTIGATION', subtitle: 'Cloud-received diagnostic snapshots and private gzip archives.', icon: HardDrive, component: Diagnostics },
-  { name: 'Firmware comparison', group: 'INVESTIGATION', subtitle: 'Compare retained uptime windows across firmware boots.', icon: FileClock, component: Firmware },
-  { name: 'Alerts', group: 'OPERATIONS', subtitle: 'Open incidents, event history, and sustained threshold rules.', icon: Bell, component: Alerts },
-  { name: 'Settings', group: 'OPERATIONS', subtitle: 'Display preferences, collection intervals, client labels, and credentials.', icon: SettingsIcon, component: Settings },
+  { name: 'Overview', group: 'Telemetry', subtitle: 'Live system vitals, active incidents, and WAN throughput.', icon: LayoutDashboard, component: Overview },
+  { name: 'CPU & system', group: 'Telemetry', subtitle: 'Processor load, per-core balance, processes, thermals, and kernel limits.', icon: Cpu, component: CPU },
+  { name: 'Memory', group: 'Telemetry', subtitle: 'RAM utilization, reclaimable kernel pools, pressure stalls, and VM events.', icon: Database, component: Memory },
+  { name: 'Network', group: 'Telemetry', subtitle: 'Uplink throughput, interface counters, and daily WAN bandwidth.', icon: Network, component: NetworkPage },
+  { name: 'Wi-Fi', group: 'Telemetry', subtitle: 'Radio channel survey, signal quality, and anonymized client stations.', icon: Wifi, component: WiFi },
+  { name: 'Internet & ISP', group: 'Telemetry', subtitle: 'Router-originated IPv4, IPv6, gateway, and DNS reachability probes.', icon: Globe, component: Internet },
+  { name: 'DNS & adblock', group: 'Telemetry', subtitle: 'Resolver health, adblock service checks, and daemon status.', icon: ShieldCheck, component: DNS },
+  { name: 'Logs', group: 'Diagnostics', subtitle: 'Grouped system and kernel logs with severity and service filters.', icon: Terminal, component: Logs },
+  { name: 'Diagnostics', group: 'Diagnostics', subtitle: 'Cloud-received diagnostic snapshots and private gzip archives.', icon: HardDrive, component: Diagnostics },
+  { name: 'Firmware comparison', group: 'Diagnostics', subtitle: 'Compare retained uptime windows across firmware boots.', icon: FileClock, component: Firmware },
+  { name: 'Alerts', group: 'Operations', subtitle: 'Open incidents, event history, and sustained threshold rules.', icon: Bell, component: Alerts },
+  { name: 'Settings', group: 'Operations', subtitle: 'Display preferences, collection intervals, client labels, and credentials.', icon: SettingsIcon, component: Settings },
 ] as const;
 
-const navGroups = ['TELEMETRY', 'INVESTIGATION', 'OPERATIONS'] as const;
+const navGroups = ['Telemetry', 'Diagnostics', 'Operations'] as const;
 
 export default function App() {
   return (
@@ -104,7 +104,7 @@ function SessionApp() {
     return (
       <main className="auth-wrap">
         <div role="status" className="loading">
-          Restoring secure session…
+          Restoring session…
         </div>
       </main>
     );
@@ -121,13 +121,13 @@ function Brand() {
   return (
     <div className="brand">
       <div className="brand-icon">
-        <Router size={22} />
+        <Router size={18} />
       </div>
       <div>
         <strong>
-          nicx<span> / monitor</span>
+          nicx <span>monitor</span>
         </strong>
-        <small>ROUTER OBSERVABILITY</small>
+        <small>Router observability</small>
       </div>
     </div>
   );
@@ -139,8 +139,8 @@ function Setup() {
       <Card className="auth-card">
         <Brand />
         <p className="eyebrow">Configuration required</p>
-        <h1>Your router, clearly observed.</h1>
-        <p className="muted">Connect this dashboard to your Supabase project to begin. No demo metrics or simulated devices are shown.</p>
+        <h1>Connect your Supabase project.</h1>
+        <p className="muted">Configure the environment variables below before signing in. No demo metrics or simulated routers are bundled.</p>
         <ol className="setup-list">
           <li>
             Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> using the browser-safe project key.
@@ -161,18 +161,14 @@ function Login({ initialError }: { initialError: string }) {
   const [password, setPassword] = useState('');
   const dismissLogin = useRef<(() => void) | null>(null);
   useEffect(() => () => dismissLogin.current?.(), []);
+
   return (
     <main className="auth-wrap">
       <Card className="auth-card">
         <Brand />
         <div className="auth-intro">
-          <p className="eyebrow">PRIVATE CONTROL ROOM</p>
-          <h1>
-            A clearer view
-            <br />
-            of your network.
-          </h1>
-          <p className="muted">Live observations, useful history, and the context behind every change.</p>
+          <h1>Sign in to your router workspace</h1>
+          <p className="muted">View live telemetry, system logs, and diagnostics from your OpenWrt devices.</p>
         </div>
         <ActionForm
           className="stack"
@@ -213,7 +209,7 @@ function Login({ initialError }: { initialError: string }) {
           </ActionSubmit>
         </ActionForm>
         <p className="small muted auth-foot">
-          <ShieldCheck size={15} /> Private access. Accounts are created by your project administrator.
+          <ShieldCheck size={15} /> Private access. Accounts are provisioned by your project administrator.
         </p>
       </Card>
     </main>
@@ -314,23 +310,19 @@ function Shell() {
                     href={'#' + encodeURIComponent(p.name)}
                     aria-current={page === p.name ? 'page' : undefined}
                     className={page === p.name ? 'active' : ''}
+                    title={p.name === 'Alerts' && openAlerts.length > 0 ? `${openAlerts.length} open alerts` : undefined}
                     onClick={() => {
                       setPage(p.name);
                       setMenu(false);
                     }}
                   >
-                    <p.icon size={17} />
+                    <p.icon size={16} />
                     <span>{p.name}</span>
                     {p.name === 'Alerts' && openAlerts.length > 0 && (
-                      <span
-                        className={`nav-badge ${hasCriticalAlert ? 'bad' : 'warn'}`}
-                        aria-hidden="true"
-                        title={`${openAlerts.length} open alert${openAlerts.length === 1 ? '' : 's'}`}
-                      >
+                      <span className={`nav-badge ${hasCriticalAlert ? 'bad' : 'warn'}`} aria-hidden="true">
                         {openAlerts.length}
                       </span>
                     )}
-                    {page === p.name && !(p.name === 'Alerts' && openAlerts.length > 0) && <span className="active-marker" />}
                   </a>
                 ))}
             </div>
@@ -341,11 +333,7 @@ function Shell() {
             <span className={`status-dot ${paused ? 'idle' : ''}`} />
             {transport}
           </span>
-          <p>
-            Private telemetry
-            <br />
-            <span className="muted">Outbound connections only</span>
-          </p>
+          <p>Outbound telemetry only. No remote shell.</p>
           <ActionButton
             variant="ghost"
             pendingLabel="Signing out…"
@@ -355,7 +343,7 @@ function Shell() {
               if (result.error) throw result.error;
             }}
           >
-            <LogOut size={16} /> Sign out
+            <LogOut size={15} /> Sign out
           </ActionButton>
         </div>
       </aside>
@@ -363,37 +351,10 @@ function Shell() {
         <header className="topbar">
           <div className="topbar-left">
             <Button className="mobile-menu" variant="ghost" aria-label="Open navigation" onClick={() => setMenu(true)}>
-              <Menu size={20} />
+              <Menu size={19} />
             </Button>
-            <span className="breadcrumb">
-              Workspace <ChevronRight size={13} /> <strong>{current.name}</strong>
-            </span>
-          </div>
-          <div className="topbar-actions">
-            <span className="timezone">{zone}</span>
-            <Button
-              variant="ghost"
-              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            >
-              {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
-            </Button>
-            <span className="avatar" title={state.session.user.email}>
-              {state.session.user.email?.slice(0, 1).toUpperCase() || 'N'}
-            </span>
-          </div>
-        </header>
-        <main id="main-content" tabIndex={-1}>
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">
-                {current.group} / {String(pages.indexOf(current) + 1).padStart(2, '0')}
-              </p>
-              <h1>{current.name}</h1>
-              <p className="muted">{current.subtitle}</p>
-            </div>
             <div className="router-picker">
-              <Router size={18} />
+              <Router size={16} />
               <select aria-label="Current router" value={device?.id || ''} onChange={(e) => selectDevice(e.target.value)}>
                 {!devices.length && <option value="">No routers enrolled</option>}
                 {devices.map((d) => (
@@ -405,13 +366,36 @@ function Shell() {
               <Enrollment />
             </div>
           </div>
+          <div className="topbar-actions">
+            <span className="timezone">{zone}</span>
+            <Button
+              variant="ghost"
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </Button>
+            <span className="avatar" title={state.session.user.email}>
+              {state.session.user.email?.slice(0, 1).toUpperCase() || 'N'}
+            </span>
+          </div>
+        </header>
+
+        <main id="main-content" tabIndex={-1}>
+          <div className="page-heading">
+            <div>
+              <h1>{current.name}</h1>
+              <p className="muted">{current.subtitle}</p>
+            </div>
+            {device && <ObservationTime />}
+          </div>
 
           {device && (
             <div className="control-dock">
               <div className="device-strip">
                 <span className={`badge ${device.revoked_at ? 'bad' : online ? 'good' : 'warn'}`}>
                   <span className="status-dot" />
-                  {device.revoked_at ? 'Revoked' : online ? 'Receiving' : `Offline · ${relativeAge(device.last_seen_at)}`}
+                  {device.revoked_at ? 'Revoked' : online ? 'Receiving' : `Offline (${relativeAge(device.last_seen_at)})`}
                 </span>
                 <strong>{device.name}</strong>
                 <span className="muted small device-model">{device.model || 'Model not reported'}</span>
@@ -427,7 +411,7 @@ function Shell() {
                   </span>
                 )}
                 <span className="strip-spacer" />
-                <ObservationTime />
+                <span className="small muted last-refresh">Checked {date(lastRefreshAt, zone)}</span>
               </div>
 
               <section className="time-toolbar" aria-label="Shared time and refresh controls">
@@ -459,7 +443,7 @@ function Shell() {
                 <span className="range-caption small muted">
                   {range.live
                     ? `Last ${range.hours === 0.25 ? '15 minutes' : range.hours === 168 ? '7 days' : range.hours === 720 ? '30 days' : range.hours + ' hours'}`
-                    : `${date(range.from, zone, true)} → ${date(range.to, zone, true)}`}
+                    : `${date(range.from, zone, true)} to ${date(range.to, zone, true)}`}
                 </span>
                 <div className="strip-spacer" />
                 <div className="toolbar-right">
@@ -472,10 +456,9 @@ function Shell() {
                     successMessage="Cloud data refreshed. No router collection was requested."
                     onAction={manualRefresh}
                   >
-                    <RefreshCw size={15} />
+                    <RefreshCw size={14} />
                     <span className="refresh-label">Refresh</span>
                   </ActionButton>
-                  <span className="small muted last-refresh">Refreshed {date(lastRefreshAt, zone)}</span>
                 </div>
               </section>
 
@@ -516,7 +499,7 @@ function Shell() {
                 <div className="history-banner" role="status">
                   <Clock size={15} />
                   <span>
-                    <strong>Historical window:</strong> {date(range.from, zone, true)} → {date(range.to, zone, true)}. Gauges show the last
+                    <strong>Historical window:</strong> {date(range.from, zone, true)} to {date(range.to, zone, true)}. Gauges show the last
                     retained raw observation in this range.
                   </span>
                   <Button
@@ -535,7 +518,7 @@ function Shell() {
 
           {error && (
             <div role="alert" className="notice danger">
-              {error}
+              <span>{error}</span>
               <ActionButton pendingLabel="Retrying…" successMessage="Cloud reads completed successfully." onAction={manualRefresh}>
                 Retry cloud reads
               </ActionButton>
@@ -549,7 +532,7 @@ function Shell() {
               </div>
             ) : !device ? (
               <Card>
-                <Empty title="Your control room is ready">Enroll your first router to see its observations, history and alerts.</Empty>
+                <Empty title="No router enrolled yet">Enroll your first router to see live telemetry, history, and alerts.</Empty>
                 <div className="center">
                   <Enrollment />
                 </div>
@@ -570,9 +553,9 @@ function Shell() {
 
           <footer>
             <span>
-              <Activity size={13} /> NICX MONITOR
+              <Activity size={13} /> Nicx Router Monitor
             </span>
-            <span>UTC storage · {zone} display · missing data stays unknown</span>
+            <span>UTC storage, {zone} display, missing metrics stay unknown</span>
           </footer>
         </main>
       </div>

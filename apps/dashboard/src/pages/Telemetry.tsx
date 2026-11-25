@@ -245,10 +245,10 @@ function QuickHealthSummary() {
           )}
           {radios.length > 0 && (
             <div className="small muted">
-              Wi-Fi: <strong>{radios.length}</strong> {radios.length === 1 ? 'radio' : 'radios'} active ·{' '}
-              <strong>{totalStations}</strong> associated {totalStations === 1 ? 'station' : 'stations'} ·{' '}
-              <a href="#Wi-Fi" style={{ color: 'var(--accent)' }}>
-                Inspect Wi-Fi →
+              Wi-Fi: <strong>{radios.length}</strong> {radios.length === 1 ? 'radio' : 'radios'} active,{' '}
+              <strong>{totalStations}</strong> associated {totalStations === 1 ? 'station' : 'stations'}.{' '}
+              <a href="#Wi-Fi" style={{ color: 'var(--accent)', fontWeight: 500 }}>
+                Open Wi-Fi details
               </a>
             </div>
           )}

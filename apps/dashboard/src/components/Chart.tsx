@@ -74,17 +74,17 @@ export default function Chart({
     let observer: ResizeObserver | undefined;
     const dark = theme === 'dark';
     const palette = {
-      text: dark ? '#94a6bd' : '#4b5e75',
-      split: dark ? '#223146' : '#dde5ee',
-      axisLine: dark ? '#344760' : '#bcc9d8',
-      tooltipBg: dark ? '#0e1928' : '#ffffff',
-      tooltipBorder: dark ? '#2c3f5a' : '#c8d5e3',
-      tooltipText: dark ? '#e8eef6' : '#1a2c43',
-      primary: dark ? '#48cede' : '#007c8e',
-      secondary: dark ? '#f3bd6b' : '#b86800',
-      tertiary: dark ? '#77d8b3' : '#177b58',
-      mutedLine: dark ? '#647a98' : '#7b8fa6',
-      areaFill: dark ? 'rgba(72, 206, 222, 0.08)' : 'rgba(0, 124, 142, 0.08)',
+      text: dark ? '#8f96a0' : '#5c626d',
+      split: dark ? '#25282e' : '#e6e6e1',
+      axisLine: dark ? '#343942' : '#c8c8c0',
+      tooltipBg: dark ? '#181a1d' : '#ffffff',
+      tooltipBorder: dark ? '#2b3036' : '#dcdcd6',
+      tooltipText: dark ? '#f0f1f3' : '#16181c',
+      primary: dark ? '#4f8ff7' : '#1d5fd6',
+      secondary: dark ? '#e5993e' : '#b85d00',
+      tertiary: dark ? '#2ec27e' : '#127a4d',
+      mutedLine: dark ? '#6e7681' : '#7b818c',
+      areaFill: dark ? 'rgba(79, 143, 247, 0.10)' : 'rgba(29, 95, 214, 0.08)',
     };
 
     try {
@@ -217,7 +217,7 @@ export default function Chart({
       chart.setOption({
         animation: false,
         backgroundColor: 'transparent',
-        grid: { left: 54, right: 18, top: showLegend ? 36 : 24, bottom: 56 },
+        grid: { left: 52, right: 16, top: showLegend ? 34 : 22, bottom: 52 },
         tooltip: {
           trigger: 'axis',
           backgroundColor: palette.tooltipBg,
@@ -284,7 +284,7 @@ export default function Chart({
           { type: 'inside', filterMode: 'none' },
           {
             type: 'slider',
-            height: 16,
+            height: 15,
             bottom: 8,
             borderColor: 'transparent',
             fillerColor: palette.areaFill,
