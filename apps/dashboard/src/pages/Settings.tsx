@@ -302,7 +302,12 @@ export function Settings() {
           </label>
           <ActionSubmit pendingLabel="Saving client…">Save client name</ActionSubmit>
         </ActionForm>
-        <QueryState {...clients} empty={!clients.data?.length}>
+        <QueryState
+          {...clients}
+          empty={!clients.data?.length}
+          emptyTitle="No client names saved"
+          emptyMessage="Save a friendly name above to label anonymized Wi-Fi stations on the Wi-Fi page."
+        >
           <DataTable
             data={clients.data || []}
             columns={[

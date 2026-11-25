@@ -151,7 +151,12 @@ export function Logs() {
         </Button>
       </form>
 
-      <QueryState {...q} empty={!data.length}>
+      <QueryState
+        {...q}
+        empty={!data.length}
+        emptyTitle="No matching logs"
+        emptyMessage="Try broadening the time window, severity filter, or search term."
+      >
         <DataTable
           data={data}
           columns={[
@@ -298,7 +303,12 @@ export function Diagnostics() {
           Records last checked {date(q.refreshedAt, zone, true)}
           {q.loading ? ' · checking cloud records…' : ''}
         </p>
-        <QueryState {...q} empty={!q.data?.length}>
+        <QueryState
+          {...q}
+          empty={!q.data?.length}
+          emptyTitle="No diagnostic snapshots"
+          emptyMessage="Snapshots appear here after the router uploads them."
+        >
           {(q.data || []).slice(0, 20).map((row: Row) => {
             const id = String(row.id);
             const payload = object(row.payload);
@@ -471,7 +481,12 @@ export function Alerts() {
         </select>
       }
     >
-      <QueryState {...q} empty={!q.data?.length}>
+      <QueryState
+        {...q}
+        empty={!q.data?.length}
+        emptyTitle="No alerts in this view"
+        emptyMessage="No open or matching alert incidents were recorded for this router."
+      >
         <DataTable
           data={(q.data || []).slice(0, 50)}
           columns={[
@@ -576,7 +591,12 @@ function AlertRules() {
   return (
     <section className="subsection">
       <h3>Threshold rules</h3>
-      <QueryState {...q} empty={!q.data?.length}>
+      <QueryState
+        {...q}
+        empty={!q.data?.length}
+        emptyTitle="No threshold rules"
+        emptyMessage="Add a rule below to monitor sustained CPU, RAM, temperature, latency, or conntrack thresholds."
+      >
         <DataTable
           data={q.data || []}
           columns={[
@@ -801,7 +821,12 @@ export function Firmware() {
         differences. These observations do not establish causation.
       </Notice>
       <Card title="Firmware comparison" description="Uses retained raw samples aligned by uptime, excluding boot warm-up by default.">
-        <QueryState {...q} empty={!boots.length}>
+        <QueryState
+          {...q}
+          empty={!boots.length}
+          emptyTitle="No boot sessions recorded"
+          emptyMessage="Boot sessions appear once the router completes at least one upload cycle."
+        >
           <ActionForm
             className="filters"
             pending="Reading both boot windows and comparing observations…"

@@ -128,7 +128,7 @@ describe('telemetry presentation helpers', () => {
     expect(wifiBand(2437)).toBe('2.4 GHz');
     expect(wifiBand(5180)).toBe('5 GHz');
     expect(wifiBand(6115)).toBe('6 GHz');
-    expect(serviceCheckLabel('procd_status_success')).toBe('procd statusSuccess');
+    expect(serviceCheckLabel('procd_status_success')).toBe('Active (procd)');
     expect(ruleCategoryLabel('oom:boot-1')).toBe('Kernel OOM');
     expect(ruleCategoryLabel('reachability:ipv4')).toBe('Reachability');
     expect(ALERT_METRICS.mem_available_kb.defaultOperator).toBe('lt');

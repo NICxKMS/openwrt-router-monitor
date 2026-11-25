@@ -505,7 +505,7 @@ export function Memory() {
             data={categories}
             columns={[
               { key: 'name', label: 'Category' },
-              { key: 'bytes', label: 'Observed memory', render: bytes },
+              { key: 'bytes', label: 'Memory', render: bytes },
               {
                 key: 'pct',
                 label: 'Share of RAM',
@@ -628,7 +628,7 @@ export function Network() {
   return (
     <>
       <div className="stats">
-        <Stat label="Download rate (Rx)" value={fmt(rxMbps, ' Mbps', 2)} sub="Designated WAN uplinks" tone="accent" />
+        <Stat label="Download rate (Rx)" value={fmt(rxMbps, ' Mbps', 2)} sub="Designated WAN uplinks" />
         <Stat label="Upload rate (Tx)" value={fmt(txMbps, ' Mbps', 2)} sub="Designated WAN uplinks" />
         <Stat
           label="Latest interval volume"
@@ -666,7 +666,12 @@ export function Network() {
       )}
 
       <Card title="Daily internet usage" description="Observed bytes per UTC day, not your ISP bill. Incomplete coverage understates totals.">
-        <QueryState {...q} empty={!dailyRows.length}>
+        <QueryState
+          {...q}
+          empty={!dailyRows.length}
+          emptyTitle="No daily traffic totals"
+          emptyMessage="Daily WAN byte totals appear after the router uploads observations in this range."
+        >
           <DataTable
             data={dailyRows}
             columns={[
@@ -740,7 +745,7 @@ export function WiFi() {
 
       <div className="stats">
         <Stat label="Active radios" value={radios.length || '—'} sub={wifi.available === false ? 'iw unavailable' : 'Monitored wireless interfaces'} />
-        <Stat label="Associated stations" value={radios.length ? totalStations : '—'} sub="Total across radios" tone="accent" />
+        <Stat label="Associated stations" value={radios.length ? totalStations : '—'} sub="Total across radios" />
         <Stat label="Average signal" value={fmt(avgSignal, ' dBm', 0)} sub="Measured station mean" />
         <Stat label="Regulatory domain" value={typeof wifi.country === 'string' ? wifi.country : '—'} sub="Reported by iw reg get" />
       </div>
@@ -768,16 +773,19 @@ export function WiFi() {
                 label: 'Client',
                 render: (v) => {
                   const id = String(v ?? '—');
+                  const shortId = id.length > 24 ? `${id.slice(0, 22)}…` : id;
                   const friendly = nameByClientId.get(id);
                   return friendly ? (
-                    <div>
+                    <div style={{ minWidth: 145 }}>
                       <strong>{friendly}</strong>
                       <div className="small muted">
-                        <code title={id}>{id.slice(0, 12)}…</code>
+                        <code title={id}>{shortId}</code>
                       </div>
                     </div>
                   ) : (
-                    <code title={id}>{id}</code>
+                    <div style={{ minWidth: 120 }}>
+                      <code title={id}>{shortId}</code>
+                    </div>
                   );
                 },
               },
@@ -785,7 +793,7 @@ export function WiFi() {
                 key: 'radio',
                 label: 'Radio',
                 render: (v, row) => (
-                  <span>
+                  <span style={{ whiteSpace: 'nowrap' }}>
                     <code>{String(v ?? '—')}</code>
                     {row.band ? <span className="badge info" style={{ marginLeft: 6 }}>{String(row.band)}</span> : null}
                   </span>
@@ -805,7 +813,7 @@ export function WiFi() {
                 key: 'rates',
                 label: 'PHY Rate (Rx / Tx)',
                 render: (_v, row) => (
-                  <span className="mono small">
+                  <span className="mono small" style={{ whiteSpace: 'nowrap' }}>
                     {fmt(row.rx_rate_mbps, ' Mbps', 0)} / {fmt(row.tx_rate_mbps, ' Mbps', 0)}
                   </span>
                 ),
@@ -817,14 +825,14 @@ export function WiFi() {
                   const retries = num(row.tx_retries);
                   const failed = num(row.tx_failed);
                   return (
-                    <span className={`mono small ${failed && failed > 0 ? 'error-text' : ''}`}>
+                    <span className={`mono small ${failed && failed > 0 ? 'error-text' : ''}`} style={{ whiteSpace: 'nowrap' }}>
                       {retries !== null ? retries.toLocaleString() : '—'} / {failed !== null ? failed.toLocaleString() : '—'}
                     </span>
                   );
                 },
               },
-              { key: 'rx_bytes', label: 'Rx', render: bytes },
-              { key: 'tx_bytes', label: 'Tx', render: bytes },
+              { key: 'rx_bytes', label: 'Rx', render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span> },
+              { key: 'tx_bytes', label: 'Tx', render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span> },
             ]}
           />
         ) : (

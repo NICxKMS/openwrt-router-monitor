@@ -303,7 +303,7 @@ export function DataTable({
 }
 
 export function Interfaces() {
-  const { latest } = useMonitor();
+  const { latest, range } = useMonitor();
   const data = rows(latest?.interfaces);
   return (
     <Card title="Interfaces" description="Ethernet WAN and USB WAN are measured separately; LAN is excluded from Internet totals.">
@@ -324,15 +324,15 @@ export function Interfaces() {
             {
               key: 'rx_delta',
               label: 'Rx rate',
-              render: (v, row) => fmt(rate(v, row.elapsed_s), ' Mbps', 2),
+              render: (v, row) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{fmt(rate(v, row.elapsed_s), ' Mbps', 2)}</span>,
             },
             {
               key: 'tx_delta',
               label: 'Tx rate',
-              render: (v, row) => fmt(rate(v, row.elapsed_s), ' Mbps', 2),
+              render: (v, row) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{fmt(rate(v, row.elapsed_s), ' Mbps', 2)}</span>,
             },
-            { key: 'rx_bytes', label: 'Rx total', render: bytes },
-            { key: 'tx_bytes', label: 'Tx total', render: bytes },
+            { key: 'rx_bytes', label: 'Rx total', render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span> },
+            { key: 'tx_bytes', label: 'Tx total', render: (v) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{bytes(v)}</span> },
             {
               key: 'reset',
               label: 'State',
@@ -341,7 +341,11 @@ export function Interfaces() {
           ]}
         />
       ) : (
-        <Empty title="No interface counters reported" />
+        <Empty title="No interface counters reported">
+          {range.live
+            ? 'Data will appear after this router sends its first observation.'
+            : 'No per-interface breakdown was stored for this historical observation.'}
+        </Empty>
       )}
     </Card>
   );
@@ -396,7 +400,7 @@ export function ProgressBar({
   return (
     <div className={`meter ${resolved}`} aria-label={label}>
       <div className="meter-track">
-        <div className="meter-fill" style={{ width: `${clamped}%` }} />
+        <div className="meter-fill" style={{ width: clamped > 0 ? `max(3px, ${clamped}%)` : '0%' }} />
       </div>
       <span>{fmt(clamped, '%')}</span>
     </div>

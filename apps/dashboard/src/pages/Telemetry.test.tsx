@@ -137,7 +137,7 @@ describe('structured telemetry views', () => {
   it('renders AdBlock Fast status from services and service_checks on DNS page', () => {
     render(<DNS />);
     expect(screen.getByText('Ad blocking (AdBlock Fast)')).toBeInTheDocument();
-    expect(screen.getByText('procd statusSuccess')).toBeInTheDocument();
+    expect(screen.getByText('Active (procd)')).toBeInTheDocument();
     expect(screen.getByText('14.5 ms')).toBeInTheDocument();
   });
 

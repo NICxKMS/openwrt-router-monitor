@@ -271,11 +271,11 @@ export function serviceCheckLabel(code: unknown): string {
     nft_table_absent: 'fw4 table missing',
     nft_unavailable: 'nft tool unavailable',
     nft_query_unknown: 'fw4 check inconclusive',
-    procd_status_success: 'procd statusSuccess',
-    procd_status_stopped: 'procd statusStopped',
-    procd_status_failed: 'procd statusFail',
-    procd_status_transition: 'procd transitioning',
-    procd_status_unavailable: 'procd status unavailable',
+    procd_status_success: 'Active (procd)',
+    procd_status_stopped: 'Stopped (procd)',
+    procd_status_failed: 'Failed (procd)',
+    procd_status_transition: 'Transitioning (procd)',
+    procd_status_unavailable: 'Status unavailable (procd)',
   };
   return typeof code === 'string' ? map[code] || code.replaceAll('_', ' ') : 'Not checked';
 }
