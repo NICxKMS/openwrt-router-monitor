@@ -41,6 +41,36 @@ describe('private API',()=>{
   it('hashes credentials and uses one transactional ingestion call',async()=>{let sent:any;const fetcher=vi.fn(async (_url:any,options:any)=>{sent=JSON.parse(options.body);return Response.json({accepted:true,duplicate:false,config:{sample_interval:10}});});const r=await createApp(fetcher).fetch(request('/api/v1/telemetry',batch),env);expect(r.status).toBe(200);expect(sent.p_token_hash).toBe(await sha256(token));expect(JSON.stringify(sent)).not.toContain(token);expect(fetcher).toHaveBeenCalledTimes(1);expect(r.headers.get('Cache-Control')).toBe('no-store');});
   it('rejects oversized streaming bodies without trusting content length',async()=>{const r=await createApp(vi.fn()).fetch(request('/api/v1/telemetry',{...batch,extra:'x'.repeat(100000)}),env);expect(r.status).toBe(413);});
   it('sanitizes logs and rejects arbitrary remote commands',async()=>{let sent:any;const fetcher=vi.fn(async(_u:any,o:any)=>{sent=JSON.parse(o.body);return Response.json({accepted:true,duplicate:false,config:{}});});const log={seq:1,uptime_s:1,observed_at:null,severity:3,service:'test',message:'password=secret 192.168.1.1',count:1};expect((await createApp(fetcher).fetch(request('/api/v1/telemetry',{...batch,logs:[log]}),env)).status).toBe(200);expect(sent.p_batch.logs[0].message).not.toContain('secret');expect(sent.p_batch.logs[0].message).not.toContain('192.168');});
+  it('retries a conflicting settings save while preserving the concurrent settings',async()=>{
+    const owner='00000000-0000-4000-8000-000000000009';
+    let stored={diagnostics_enabled:true,upload_interval:30,wifi_interval:1200};
+    let writes=0;
+    const app=createApp(async (input,options)=>{
+      const url=new URL(String(input));
+      if(url.pathname==='/auth/v1/user')return Response.json({id:owner});
+      expect(url.pathname).toBe('/rest/v1/devices');
+      expect(url.searchParams.get('owner_id')).toBe('eq.'+owner);
+      expect(url.searchParams.get('id')).toBe('eq.'+batch.device_id);
+      if(options?.method!=='PATCH')return Response.json([{id:batch.device_id,config:stored}]);
+      writes++;
+      if(writes===1)stored={...stored,diagnostics_enabled:false};
+      const previous=JSON.parse(url.searchParams.get('config')!.slice(3));
+      expect(new Headers(options.headers).get('Prefer')).toBe('return=representation');
+      if(JSON.stringify(previous)!==JSON.stringify(stored))return Response.json([]);
+      stored=JSON.parse(String(options.body)).config;
+      return Response.json([{id:batch.device_id}]);
+    });
+    const response=await app.fetch(request('/api/v1/devices/'+batch.device_id+'/config',{upload_interval:60},'user.jwt.fixture-signature'),env);
+    expect(response.status).toBe(200);
+    expect(writes).toBe(2);
+    expect(stored).toEqual({diagnostics_enabled:false,upload_interval:60,wifi_interval:900});
+  });
+  it('delivers legacy settings with supported interval bounds and preserves the other settings',async()=>{
+    const app=createApp(async()=>Response.json({device_id:batch.device_id,config:{wifi_interval:1200,process_interval:2400,diagnostics_enabled:true}}));
+    const response=await app.fetch(new Request('https://router.nicx.me/api/v1/device/config',{headers:{Authorization:'Bearer '+token}}),env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({device_id:batch.device_id,config:{wifi_interval:900,process_interval:1800,diagnostics_enabled:true}});
+  });
   it('maps backend rate limits and fails closed on backend failures',async()=>{let app=createApp(async()=>Response.json({message:'rate_limited',code:'P0001'},{status:400}));expect((await app.fetch(request('/api/v1/telemetry',batch),env)).status).toBe(429);app=createApp(async()=>new Response('database secret',{status:503}));const r=await app.fetch(request('/api/v1/telemetry',batch),env);expect(r.status).toBe(503);expect(await r.text()).not.toContain('database secret');});
   it('never accepts device token as owner session',async()=>{const fetcher=vi.fn();expect((await createApp(fetcher).fetch(request('/api/v1/enrollment',{name:'home'}),env)).status).toBe(401);expect(fetcher).not.toHaveBeenCalled();});
   it('rejects unsupported schema without database calls',async()=>{const fetcher=vi.fn();expect((await createApp(fetcher).fetch(request('/api/v1/telemetry',{...batch,schema_version:2}),env)).status).toBe(400);expect(fetcher).not.toHaveBeenCalled();});

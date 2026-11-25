@@ -22,6 +22,12 @@ function actionError(error) {
         invalid_https_origin: _('Enter the saved HTTPS Worker origin without a path or trailing slash.'),
         invalid_enrollment_token: _('Paste a valid one-use enrollment token from the dashboard.'),
         enrollment_failed: _('Enrollment was not confirmed. Check the connection and token expiry; create a fresh token if needed.'),
+        enrollment_stop_failed: _('The router could not stop telemetry safely. Check the running status and use a fresh enrollment token to try again.'),
+        enrollment_config_write_failed: _('The router could not save the new enrollment settings. The previous enrollment was kept. Use a fresh token to try again.'),
+        enrollment_credential_write_failed: _('The router could not store the new enrollment credential. Use a fresh enrollment token to try again.'),
+        enrollment_rollback_failed: _('The router could not restore its previous enrollment. Re-enroll with a fresh token before restarting telemetry.'),
+        credential_operation_in_progress: _('Another credential action is running. Wait for it to finish before trying again.'),
+        credential_write_failed: _('The router could not save this credential. The previous credential was kept.'),
         invalid_device_credential: _('The credential format is invalid. Paste the complete credential returned by dashboard rotation.'),
         restart_failed: _('Telemetry could not restart. Check the saved configuration and the running status above.'),
         telemetry_stopped: _('Telemetry stopped before an acknowledgment. Start it again to retry this request.'),
@@ -75,6 +81,7 @@ function runAction(button, feedback, operation, pending, success) {
 function acceptSnapshotStatus(current, incoming, ownPending) {
     if(!incoming || !incoming.request_id)return false;
     if(!current || !current.request_id)return true;
+    if(current.boot_id && incoming.boot_id && current.boot_id!==incoming.boot_id)return true;
     var currentTime=Number(current.requested_uptime_s), incomingTime=Number(incoming.requested_uptime_s);
     var hasTimes=Number.isFinite(currentTime) && Number.isFinite(incomingTime);
     if(hasTimes && incomingTime<currentTime)return false;
@@ -153,19 +160,20 @@ return view.extend({
                 tokenInput.value='';ui.hideModal();setActionFeedback(enrollFeedback,_('Enrollment cancelled.'),'cancelled');
             }},_('Cancel'));
             var submit = E('button', {'type':'button','class':'cbi-button cbi-button-positive','click':function() {
+                var submittedOrigin = endpointInput.value, submittedName = nameInput.value;
                 var token = tokenInput.value;tokenInput.value='';cancel.disabled=true;enrollButton.disabled=true;
                 return runAction(submit,[modalFeedback,enrollFeedback],function() {
-                    return enroll(endpointInput.value,token,nameInput.value).finally(function(){token='';});
+                    return enroll(submittedOrigin,token,submittedName).finally(function(){token='';});
                 },_('Enrolling router…'),function(result) {
                     return result.restart_required ? _('Enrollment saved. Restart telemetry to use the new device ID.') : (result.restarted ? _('Router enrolled; telemetry restarted with the new device ID.') : _('Router enrolled. Enable telemetry and Save & Apply to start.'));
                 }).then(function(result) {
                     if(result.ok) {
-                        uci.set('nicx-telemetry','main','endpoint',endpointInput.value);
+                        uci.set('nicx-telemetry','main','endpoint',submittedOrigin);
                         uci.set('nicx-telemetry','main','device_id',result.device_id);
                         ['endpoint','device_id'].forEach(function(key) {
                             var option=m.lookupOption(key,'main')[0];
                             var widget=option && option.getUIElement('main');
-                            if(widget)widget.setValue(key==='endpoint'?endpointInput.value:result.device_id);
+                            if(widget)widget.setValue(key==='endpoint'?submittedOrigin:result.device_id);
                         });
                         ui.hideModal();
                     }
@@ -194,7 +202,7 @@ return view.extend({
         }},_('Replace rotated credential'));
         var snapshotNode=feedbackNode();
         snapshotNode.textContent=_('No snapshot requested in this session.');
-        var snapshotBusy=false, ownSnapshotActive=false, latestSnapshot=null, snapshotButtons=[], snapshotFeedback={};
+        var snapshotBoot=null, snapshotBusy=false, ownSnapshotActive=false, latestSnapshot=null, snapshotButtons=[], snapshotFeedback={};
         function syncSnapshotButtons(){snapshotButtons.forEach(function(button){button.disabled=snapshotBusy;});}
         function showSnapshot(meta){
             if(!acceptSnapshotStatus(latestSnapshot,meta,ownSnapshotActive))return;
@@ -209,24 +217,41 @@ return view.extend({
             if(snapshotFeedback[meta.kind])setActionFeedback(snapshotFeedback[meta.kind],text,meta.state);
             syncSnapshotButtons();
         }
+        function showSnapshotStatus(result){
+            if(result.boot_id && result.boot_id!==snapshotBoot){
+                if(snapshotBoot){
+                    latestSnapshot=null;ownSnapshotActive=false;snapshotBusy=false;
+                    snapshotNode.title='';
+                    setActionFeedback(snapshotNode,_('No snapshot requested since the router restarted.'),'');
+                    Object.keys(snapshotFeedback).forEach(function(kind){setActionFeedback(snapshotFeedback[kind],'','');});
+                    syncSnapshotButtons();
+                }
+                snapshotBoot=result.boot_id;
+            }
+            showSnapshot(result.snapshot);
+        }
         var snapshots=E('div',{},['memory','network','wifi','packages'].map(function(kind){
             var names={memory:_('Memory'),network:_('Interfaces'),wifi:_('Wi-Fi'),packages:_('Installed packages')};
             var feedback=feedbackNode();snapshotFeedback[kind]=feedback;
             var button=E('button',{'type':'button','class':'cbi-button','click':function(){
                 if(snapshotBusy)return;
+                var requestBoot=snapshotBoot;
                 return runAction(button,feedback,function(){
                     snapshotBusy=true;syncSnapshotButtons();
                     return snapshot(kind);
                 },_('Requesting snapshot…'),_('Queued locally. Waiting for the upload result below.')).then(function(result){
                     if(result.ignored)return;
-                    if(result.ok){ownSnapshotActive=true;latestSnapshot=result;showSnapshot(result);}
-                    else {ownSnapshotActive=false;snapshotBusy=result.error==='snapshot_in_progress';}
+                    if(result.ok){
+                        if(snapshotBoot && result.boot_id && snapshotBoot!==result.boot_id)return;
+                        ownSnapshotActive=true;showSnapshot(result);
+                    }
+                    else if(requestBoot===snapshotBoot){ownSnapshotActive=false;snapshotBusy=result.error==='snapshot_in_progress';}
                 }).finally(syncSnapshotButtons);
             }},_('Snapshot: ')+names[kind]);
             snapshotButtons.push(button);return E('div',{'class':'cbi-value'},[button,feedback]);
         }));
-        showSnapshot(data[1].snapshot);
-        poll.add(function(){return status().then(function(result){statusNode.textContent=statusText(result);showSnapshot(result.snapshot);}).catch(function(){statusNode.textContent=_('Could not refresh router status. The last action result remains below.');});},5);
+        showSnapshotStatus(data[1]);
+        poll.add(function(){return status().then(function(result){statusNode.textContent=statusText(result);showSnapshotStatus(result);}).catch(function(){statusNode.textContent=_('Could not refresh router status. The last action result remains below.');});},5);
         var controls=E('div',{'class':'cbi-section'},[
             E('h3',{},_('Connection and privacy')),statusNode,
             E('div',{'class':'cbi-value'},[enrollButton,enrollFeedback]),testAction.row,restartAction.row,

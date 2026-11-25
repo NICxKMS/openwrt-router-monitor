@@ -23,13 +23,20 @@ describe('diagnostic archive failure recovery',()=>{
   expect(queued).toBe(0);expect(response.status).toBe(confirmed?200:503);
   expect(await response.json()).toEqual(confirmed?{object_path:stored}:{error:'archive_commit_unconfirmed'});
  });
- for(const failure of ['deleted','ambiguous-upload'] as const)it('queues orphan cleanup after '+failure,async()=>{
+ for(const failure of ['deleted','deleted-after-lost-response','ambiguous-upload'] as const)it('queues orphan cleanup after '+failure,async()=>{
   let queued='';
+  let deleted=false;
   const app=createApp(async(input,options)=>{
    const url=new URL(String(input));
    if(url.pathname==='/auth/v1/user')return Response.json({id:owner});
    if(url.pathname==='/rest/v1/devices')return Response.json([{id:device}]);
-   if(url.pathname==='/rest/v1/diagnostics')return Response.json(options?.method==='PATCH'?[]:[{payload:{kind:'fixture'},object_path:null}]);
+   if(url.pathname==='/rest/v1/diagnostics'){
+    if(options?.method==='PATCH'){
+     deleted=true;
+     if(failure==='deleted-after-lost-response')throw new Error('Registration response lost after snapshot deletion');
+    }
+    return Response.json(deleted?[]:[{payload:{kind:'fixture'},object_path:null}]);
+   }
    if(url.pathname==='/rest/v1/rpc/resource_usage')return Response.json({archive_bytes:0});
    if(url.pathname==='/rest/v1/rpc/enqueue_storage_deletion'){queued=JSON.parse(String(options?.body)).p_object_path;return Response.json(null);}
    if(url.pathname.startsWith('/storage/v1/object/router-diagnostics/')){
@@ -41,7 +48,7 @@ describe('diagnostic archive failure recovery',()=>{
    throw new Error('Unexpected fixture request');
   });
   const response=await app.fetch(new Request(`https://router.nicx.me/api/v1/devices/${device}/diagnostics/${snapshot}/archive`,{method:'POST',headers:{Authorization:'Bearer user.jwt.fixture-signature'}}),env);
-  expect(response.status).toBe(failure==='deleted'?409:503);
+  expect(response.status).toBe(failure==='ambiguous-upload'?503:409);
   expect(queued).toMatch(new RegExp('^'+device+'/[a-f0-9-]{36}\\.json\\.gz$'));
  });
 });

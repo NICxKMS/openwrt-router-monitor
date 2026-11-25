@@ -44,6 +44,61 @@ const ownNew={request_id:'c',state:'queued',requested_uptime_s:40,updated_uptime
 if(accept(ownNew,oldDone,true))throw Error('old polling overwrites owned pending request');
 if(!accept(ownNew,{...otherBrowser,request_id:'d',requested_uptime_s:50,updated_uptime_s:50},true))throw Error('newer server slot cannot reconcile a missed terminal update');
 if(accept(oldDone,{...oldDone,state:'retrying',updated_uptime_s:19},false))throw Error('old polling regresses acknowledged upload');
+if(!accept({...ownNew,boot_id:'before'}, {...oldDone,boot_id:'after'}, true))throw Error('router reboot must reset uptime ordering');
+if(accept({...ownNew,boot_id:'before'}, {...oldDone,boot_id:'before'}, true))throw Error('older status in the same boot must be ignored');
+'''
+        subprocess.check_call(['node','-e',script,str(VIEW)])
+
+    def test_enrollment_and_snapshot_actions_track_submitted_origin_and_router_boot(self):
+        script=r'''
+const source=require('fs').readFileSync(process.argv[1],'utf8');
+String.prototype.format=function(...values){return this.replace(/%s/g,()=>values.shift());};
+const elements=[], saved={}, displayed={};
+function element(tag,attrs,contents){
+  const node={tag,attrs,contents,textContent:contents,value:attrs.value,disabled:false,dataset:{},
+    classList:new Set(),setAttribute(){},removeAttribute(){}};
+  node.classList.remove=node.classList.delete;
+  elements.push(node);
+  return node;
+}
+class FormMap {
+  section(){return {option:()=>({value(){},depends(){}})};}
+  lookupOption(key){return [{getUIElement:()=>({setValue:value=>displayed[key]=value})}];}
+  render(){return Promise.resolve({});}
+}
+let respond, sent, nextStatus, pollStatus;
+const rpc={declare:({method})=>(...args)=>{
+  if(method==='enroll'){sent=args;return new Promise(resolve=>respond=resolve);}
+  if(method==='status')return Promise.resolve(nextStatus);
+}};
+const uci={get:()=>'',set:(_config,_section,key,value)=>saved[key]=value};
+const ui={showModal(){},hideModal(){}};
+const poll={add:callback=>pollStatus=callback};
+const view=new Function('view','form','rpc','ui','poll','uci','E','_',source)(
+  {extend:x=>x},{Map:FormMap},rpc,ui,poll,uci,element,text=>text);
+(async()=>{
+  const old={boot_id:'old',request_id:'a',kind:'memory',state:'retrying',requested_uptime_s:1000};
+  await view.render([null,{boot_id:'old',snapshot:old}]);
+  const memory=elements.find(node=>node.contents==='Snapshot: Memory');
+  if(!memory.disabled)throw Error('running old snapshot should disable the button');
+  nextStatus={boot_id:'new'};
+  await pollStatus();
+  if(memory.disabled)throw Error('reboot without a new snapshot should re-enable the button');
+  nextStatus={boot_id:'new',snapshot:{boot_id:'new',request_id:'b',kind:'memory',state:'uploaded',requested_uptime_s:2}};
+  await pollStatus();
+  if(!elements.some(node=>node.title==='b' && node.dataset.state==='uploaded'))
+    throw Error('post-reboot snapshot was not displayed');
+  elements.find(node=>node.contents==='Enroll router').attrs.click();
+  const origin=elements.find(node=>node.attrs.type==='url');
+  origin.value='https://before.workers.dev';
+  const enrollment=elements.find(node=>node.contents==='Enroll').attrs.click();
+  await Promise.resolve();
+  origin.value='https://edited.workers.dev';
+  respond({ok:true,device_id:'device'});
+  await enrollment;
+  if(sent[0]!=='https://before.workers.dev' || saved.endpoint!==sent[0] || displayed.endpoint!==sent[0])
+    throw Error('submitted, staged and displayed origins differ');
+})().catch(error=>{console.error(error);process.exitCode=1});
 '''
         subprocess.check_call(['node','-e',script,str(VIEW)])
 

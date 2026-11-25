@@ -1,19 +1,24 @@
 #!/bin/sh
 # Cache slow collectors separately. Every external diagnostic has a timeout and size bound.
 collect_network() {
-    : > "$STATE/network.input"
+    : > "$STATE/network.input" || return 1
+    set --
     for logical in wan usbwan lan;do
         device=$(timeout 2 ubus call "network.interface.$logical" status 2>/dev/null | head -c 8192 | jsonfilter -e '@.l3_device' 2>/dev/null)
         case "$device" in ''|*[!a-zA-Z0-9_.:-]*)continue;;esac
+        set -- "$@" "$logical" "$device"
+    done
+    uptime_now
+    while [ "$#" -gt 0 ];do
+        logical=$1;device=$2;shift 2
         [ -r "/sys/class/net/$device/ifindex" ] || continue
-        read -r index < "/sys/class/net/$device/ifindex"
+        read -r index < "/sys/class/net/$device/ifindex" || continue
         link=unknown;changes=unknown
         [ ! -r "/sys/class/net/$device/iflink" ] || read -r link < "/sys/class/net/$device/iflink"
         [ ! -r "/sys/class/net/$device/carrier_changes" ] || read -r changes < "/sys/class/net/$device/carrier_changes"
         index="$index:$link:$changes"
-        uptime_now
-        read -r rx < "/sys/class/net/$device/statistics/rx_bytes"
-        read -r tx < "/sys/class/net/$device/statistics/tx_bytes"
+        read -r rx < "/sys/class/net/$device/statistics/rx_bytes" || continue
+        read -r tx < "/sys/class/net/$device/statistics/tx_bytes" || continue
         # Avoid double counting an accidental shared WAN/USB device.
         case " $seen_devices " in *" $device "*)continue;;esac
         seen_devices="$seen_devices $device"
@@ -62,6 +67,25 @@ detect_policy_services() {
         statusStarting|statusRestarting|statusForceReloading|statusDownloading|statusProcessing|statusTriggerBootWait|statusTriggerStartWait)adblock_check=procd_status_transition;;
     esac
     unset adblock_status
+}
+procd_service_status() {
+    local service="$1" status running
+    if ! (ulimit -f 16;timeout 2 ubus call service list "{\"name\":\"$service\"}") > "$STATE/service-status" 2>/dev/null;then
+        rm -f "$STATE/service-status"
+        return 1
+    fi
+    status=$(cat "$STATE/service-status");rm -f "$STATE/service-status"
+    [ "${#status}" -le 8192 ] || return 1
+    if printf '%s' "$status" | awk '{gsub(/[[:space:]]/,"");out=out $0} END{exit out!="{}"}';then
+        printf 'false\n'
+        return
+    fi
+    running=$(printf '%s' "$status" | jsonfilter -e "@['$service'].instances[*].running" 2>/dev/null) || return 1
+    printf '%s\n' "$running" | awk '
+        $0=="true"{running=1}
+        $0=="false"{stopped=1}
+        END{if(running)print "true";else if(stopped)print "false";else exit 1}
+    '
 }
 collect_detail() {
     detect_policy_services
@@ -124,8 +148,11 @@ collect_detail() {
     # Existence/running status only; do not export service command lines or config.
     for service in dnsmasq odhcpd sysntpd https-dns-proxy hostapd rpcd network uhttpd;do
         [ -x "/etc/init.d/$service" ] || continue
-        if timeout 2 "/etc/init.d/$service" running >/dev/null 2>&1;then value=1;else value=0;fi
-        json_add_boolean "$service" "$value"
+        case "$(procd_service_status "$service")" in
+            true)json_add_boolean "$service" 1;;
+            false)json_add_boolean "$service" 0;;
+            *)json_add_null "$service";;
+        esac
     done
     case "$firewall_active" in 0|1)json_add_boolean firewall "$firewall_active";;*)json_add_null firewall;;esac
     case "$adblock_active" in 0|1)json_add_boolean adblock-fast "$adblock_active";;*)json_add_null adblock-fast;;esac
@@ -164,7 +191,9 @@ collect_wifi() {
     client_budget=24;salt_available=0
     if [ -f "$CONFIG_DIR/privacy-salt" ] && [ ! -L "$CONFIG_DIR/privacy-salt" ] && command -v sha256sum >/dev/null;then
         if [ "$(stat -c '%a:%u' "$CONFIG_DIR/privacy-salt")" = "600:$(id -u)" ];then
-            IFS= read -r privacy_salt < "$CONFIG_DIR/privacy-salt";salt_available=1
+            if IFS= read -r privacy_salt < "$CONFIG_DIR/privacy-salt" && [ "${#privacy_salt}" -eq 64 ];then
+                case "$privacy_salt" in *[!a-f0-9]*);;*)salt_available=1;;esac
+            fi
         fi
     fi
     while read -r interface;do

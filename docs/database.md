@@ -12,7 +12,7 @@ Run the normal Supabase CLI workflow from the project directory after linking th
 supabase db push
 ```
 
-Migration 6 adds durable diagnostic dispositions to each batch receipt so a soft-budget skip or revoked cloud permission can never be presented as a stored snapshot. Historical receipts remain explicitly unknown.
+Migration 6 adds durable diagnostic dispositions to each batch receipt so a soft-budget skip or revoked cloud permission can never be presented as a stored snapshot. Historical receipts remain explicitly unknown. Migration 8 adds raw-history coverage checks, compatible ingest and credential-rotation locks, notification attempt matching, and archive deletion guards.
 
 Migration 1 creates tables, transactions, grants, indexes, RLS, and latest-only Realtime publication. Migration 2 configures a private `router-diagnostics` bucket and owner read policy; the first path segment is the device UUID. Restrictive policies deny browser writes and prevent unrelated permissive Storage policies from exposing this bucket. Migration 3 installs `pg_cron` in `pg_catalog`, schedules maintenance every minute, and bounds cron execution history. Cron failure is an installation failure, not silently ignored. Do not skip migration 3 in production.
 
@@ -31,15 +31,15 @@ All functions below use a fixed search path. Except `history`, only `service_rol
 | `rotate_device_token(p_device_id uuid,p_owner_id uuid,p_token_hash text)` | JSON `{rotated:true}`. Locks device and replaces the hash; previous credential immediately stops working. |
 | `ingest_batch(p_token_hash text,p_batch jsonb)` | JSON `{accepted,duplicate,config,storage_degraded?,diagnostics_accepted,diagnostics_request_id,diagnostics_reason}`. Diagnostic disposition is stored per batch and stable on replay; null means historical unknown. Stored diagnostics return true, policy/budget skips return false. Declining a diagnostic does not reject ordinary gauges. Authenticates, serializes per device, rate limits, deduplicates and ingests in one transaction. |
 | `maintenance()` | JSON `{deleted,completed_at}` or `{skipped:true}` if another maintenance transaction holds the advisory lock. |
-| `claim_notifications(p_limit int)` | JSON array `{id,device_id,owner_id,alert_id,event,message,severity,created_at,attempts}`. At most 50, with two-minute leases and `SKIP LOCKED`. |
-| `finish_notification(p_id uuid,p_ok bool,p_error text)` | Void; completes a currently leased job or schedules exponential retry, at most eight delivery attempts. Error text is truncated to 500 characters. Worker must sanitize errors before passing them. |
-| `enqueue_storage_deletion(p_object_path text)` | Void; validates a UUID/UUID.json.gz path and idempotently queues compensation when an archive upload races metadata deletion. |
-| `claim_storage_deletions(p_limit int)` | JSON array `{id,object_path}`, at most 50, two-minute leases. |
+| `claim_notification_attempts(p_limit int)` | JSON array `{id,device_id,owner_id,alert_id,event,message,severity,created_at,attempts}`. At most 50, with two-minute leases and `SKIP LOCKED`. |
+| `finish_notification(p_id uuid,p_attempt int,p_ok bool,p_error text)` | Void; matches the current attempt, then completes the job or schedules exponential retry, at most eight delivery attempts. Error text is truncated to 500 characters. Worker must sanitize errors before passing them. |
+| `enqueue_storage_deletion(p_object_path text)` | Void; validates a UUID/UUID.json.gz path and idempotently queues an unreferenced archive path when an upload races metadata deletion. |
+| `claim_storage_deletions(p_limit int)` | JSON array `{id,object_path}` for unreferenced paths, at most 50, with two-minute leases. A queued path is unavailable for new diagnostic references. |
 | `finish_storage_deletion(p_id uuid,p_ok bool,p_error text)` | Void; deletes a successful outbox row or schedules exponential retry. Missing Storage objects should count as success. |
 | `resource_usage()` | JSON with actual `database_bytes`, actual `table_bytes` including indexes, conservative `logical_budget_bytes`, actual Storage metadata `archive_bytes`/`archive_objects`, row counts and maintenance time. Missing object size metadata produces null, never a fabricated zero. |
 | `history(p_device_id uuid,p_from timestamptz,p_to timestamptz)` | Owner-only table result exactly as in `contracts.md`. Security invoker plus explicit `auth.uid()` ownership check; rejects invalid or over-400-day requests. |
 
-`history` uses raw data for up to three hours within the configured raw retention, minute buckets for recent ranges up to two days, 15-minute buckets for ranges up to 14 days within 180 days, hourly buckets within 365 days, and daily buckets for older requests. Maximum raw output is 2,160 rows; hosted API `max_rows=10000` permits the maximum hourly history range. Bound direct recent-detail and log queries in the UI; use the `(received_at,id)` log index for cursor pagination.
+`history` uses raw data for up to three hours within the configured raw retention when it can return the complete raw series within 2,160 rows. Short ranges with pruned or too many raw samples use overlapping minute buckets. It also uses minute buckets for recent ranges up to two days, 15-minute buckets for ranges up to 14 days within 180 days, hourly buckets within 365 days, and daily buckets for older requests. Maximum raw output is 2,160 rows; hosted API `max_rows=10000` permits the maximum hourly history range. Bound direct recent-detail and log queries in the UI; use the `(received_at,id)` log index for cursor pagination.
 
 ## Tables and grants
 
@@ -53,7 +53,7 @@ Additional columns preserve correctness: rollups have independent CPU, available
 
 Hashes are lowercase 64-character SHA-256 hex, generated by the Worker from random 256-bit credentials. Enrollment inserts lock by owner and allow at most ten active unexpired tokens; expiry cannot exceed 15 minutes. Enrollment and token rotation are atomic.
 
-Ingest takes device then credential row locks. A live credential is checked before duplicate processing. Ten nonduplicate batches per device per minute are accepted; excess attempts raise a rate-limit error with no partial inserts. A repeated batch UUID and identical canonical JSON returns `duplicate:true`; the same UUID with altered data raises a replay error. Sample/log primary keys independently deduplicate rows across batches. Batch fingerprints are nonsecret MD5 identifiers, not credential hashes. Exact batch fingerprints expire after eight days; durable boot watermarks prevent deleted old sample/log sequences from being reintroduced into rollups or logs.
+Ingest and credential rotation lock the device without blocking maintenance's foreign-key checks, then lock the credential. A live credential is checked before duplicate processing. Ten nonduplicate batches per device per minute are accepted; excess attempts raise a rate-limit error with no partial inserts. A repeated batch UUID and identical canonical JSON returns `duplicate:true`; the same UUID with altered data raises a replay error. Sample/log primary keys independently deduplicate rows across batches. Batch fingerprints are nonsecret MD5 identifiers, not credential hashes. Exact batch fingerprints expire after eight days; durable boot watermarks prevent deleted old sample/log sequences from being reintroduced into rollups or logs.
 
 Receipt time always updates `last_seen_at`, including authenticated duplicate receipts and storage-budget rejection. Latest gauges only advance for the current boot and a sequence with nondecreasing uptime; delayed samples from an already known previous boot cannot replace latest. Sparse detail merges by top-level group within a boot, resets on a new boot, and has a 64 KiB cache bound. Raw samples retain their original sparse detail. Agent collector uptime stamps remain available to explain stale detail.
 
@@ -69,7 +69,7 @@ Thresholds evaluate each newly accepted latest sample, with sustain time, recove
 
 Two consecutive explicit `connectivity.<ipv4|ipv6|dns>.available=true,reachable=false` observations open reachability/DNS alerts; missing tools/omitted families do not. A successful probe resolves them. Public endpoint failure is labeled as an observation, not an established ISP cause. New boot observations and newly inserted OOM/allocation failure or ath11k crash/restart log messages open event alerts. Event alerts remain visible until an owner handles them; the system does not invent evidence of recovery. Duplicate logs do not generate duplicate events.
 
-Open/resolved transitions enter a notification outbox in the same transaction. Delivery is asynchronous and at least once: a delivery that succeeds immediately before a lost acknowledgement can be retried. Worker notification destination selection must use the returned owner ID and configured owner-bound credentials.
+Open/resolved transitions enter a notification outbox in the same transaction. Delivery is asynchronous and at least once: a delivery that succeeds immediately before a lost acknowledgement can be retried. Worker notification destination selection uses the returned owner ID and configured owner-bound credentials. A Worker using migration 8's scoped claims leaves notifications queued if that migration has not been applied. Maintenance and archive cleanup continue.
 
 ## Retention and budget
 

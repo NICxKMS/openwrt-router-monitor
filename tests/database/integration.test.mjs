@@ -29,6 +29,7 @@ before(async()=>{
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250005_archive_replacement.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250006_diagnostic_receipts.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250007_alert_continuity.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../supabase/migrations/202611250008_backend_review.sql',import.meta.url),'utf8'));
  await db.exec(`insert into public.enrollment_tokens(owner_id,token_hash,expires_at,name) values ('${owner}','${'e'.repeat(64)}',now()+interval '5 minutes','test');`);
  device=(await rpc('enroll_device',['e'.repeat(64),token,'test','fixture'])).device_id;
 });
@@ -83,8 +84,8 @@ test('service operations and notification retry/claim work; maintenance keeps ad
  await db.exec(`update public.devices set last_seen_at=now()-interval '10 minutes' where id='${device}'`);
  await rpc('maintenance',[]);
  assert.equal((await q("select count(*)::int n from public.alerts where rule_key='offline' and resolved_at is null"))[0].n,1);
- const notifications=await rpc('claim_notifications',[20]); assert.ok(notifications.length>=1);
- await rpc('finish_notification',[notifications[0].id,false,'fixture failure']);
+ const notifications=await rpc('claim_notification_attempts',[20]); assert.ok(notifications.length>=1);
+ await rpc('finish_notification',[notifications[0].id,notifications[0].attempts,false,'fixture failure']);
  assert.equal((await q('select attempts from private.notification_queue where id=$1',[notifications[0].id]))[0].attempts,1);
 });
 test('thresholds sustain on sample time, reset between breaches, and recover with hysteresis',async()=>{
@@ -110,6 +111,73 @@ test('storage deletion outbox survives device cascade and supports leased retry'
  assert.equal((await rpc('claim_storage_deletions',[10])).length,0);
  await rpc('finish_storage_deletion',[tasks[0].id,true,null]);
  assert.equal((await q('select * from private.storage_deletions')).length,0);
+});
+test('archive cleanup never leases a path still referenced by diagnostic metadata',async()=>{
+ const path=device+'/'+crypto.randomUUID()+'.json.gz',queuedPath=device+'/'+crypto.randomUUID()+'.json.gz';
+ const snapshot=(await q('insert into public.diagnostics(device_id,boot_id,payload,object_path) values($1,$2,$3,$4) returning id',[device,boot,{},path]))[0].id;
+ await rpc('enqueue_storage_deletion',[path]);
+ assert.equal((await q('select count(*)::int n from private.storage_deletions where object_path=$1',[path]))[0].n,0);
+ // Simulate a queue item written by a previous Worker while the reference still exists.
+ await q('insert into private.storage_deletions(object_path) values($1)',[path]);
+ assert.deepEqual(await rpc('claim_storage_deletions',[10]),[]);
+ await rpc('enqueue_storage_deletion',[queuedPath]);
+ await assert.rejects(q('update public.diagnostics set object_path=$1 where id=$2',[queuedPath,snapshot]),/queued for deletion/);
+ await q('delete from public.diagnostics where id=$1',[snapshot]);
+ const tasks=await rpc('claim_storage_deletions',[10]);
+ assert.deepEqual(tasks.map(x=>x.object_path).sort(),[path,queuedPath].sort());
+ for(const task of tasks)await rpc('finish_storage_deletion',[task.id,true,null]);
+});
+test('an expired notification attempt cannot finish a newer claim',async()=>{
+ await db.exec('update private.notification_queue set available_at=now()-interval \'1 second\',claimed_until=null,last_error=null where delivered_at is null');
+ const [first]=await rpc('claim_notification_attempts',[1]);
+ assert.ok(first);
+ await q("update private.notification_queue set claimed_until=now()-interval '1 second' where id=$1",[first.id]);
+ const [second]=await rpc('claim_notification_attempts',[1]);
+ assert.equal(second.id,first.id);
+ assert.equal(second.attempts,first.attempts+1);
+ await rpc('finish_notification',[first.id,first.attempts,false,'stale failure']);
+ const [current]=await q('select claimed_until,last_error,delivered_at from private.notification_queue where id=$1',[second.id]);
+ assert.ok(current.claimed_until);
+ assert.equal(current.last_error,null);
+ assert.equal(current.delivered_at,null);
+ await rpc('finish_notification',[second.id,second.attempts,true,null]);
+ assert.ok((await q('select delivered_at from private.notification_queue where id=$1',[second.id]))[0].delivered_at);
+});
+test('history uses minute rollups for incomplete raw buckets inside the configured retention',async()=>{
+ const id=(await q("insert into public.devices(owner_id,name,config) values($1,$2,'{\"retention_raw_days\":7}') returning id",[owner,'RETAINED COVERAGE FIXTURE']))[0].id;
+ const started=Math.floor((Date.now()-5*86400000)/60000)*60000;
+ const time=(offset)=>new Date(started+offset*1000);
+ try{
+  for(const [seq,offset,cpu] of [[1,12,20],[2,22,50],[3,72,90]]){
+   await q('insert into public.metric_samples(device_id,boot_id,seq,effective_at,uptime_s,cpu_pct) values($1,$2,$3,$4,$5,$6)',[id,boot,seq,time(offset),offset,cpu]);
+   await q('select private.accumulate_sample(s) from public.metric_samples s where device_id=$1 and seq=$2',[id,seq]);
+  }
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${owner}'`);
+  const raw=await rpc('history',[id,time(10),time(90)]);
+  assert.deepEqual(raw.map(x=>Number(x.sample_count)),[1,1,1]);
+  await db.exec('reset role');
+  await q('delete from public.metric_samples where device_id=$1 and seq=1',[id]);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${owner}'`);
+  const minute=await rpc('history',[id,time(10),time(90)]);
+  assert.deepEqual(minute.map(x=>[Number(x.sample_count),x.cpu_pct]),[[2,35],[1,90]]);
+  const laterRaw=await rpc('history',[id,time(60),time(90)]);
+  assert.deepEqual(laterRaw.map(x=>new Date(x.bucket).valueOf()),[time(72).valueOf()]);
+ }finally{await db.exec('reset role');await q('delete from public.devices where id=$1',[id]);}
+});
+test('history returns a minute bucket if complete raw data exceeds the response limit',async()=>{
+ const id=(await q('insert into public.devices(owner_id,name) values($1,$2) returning id',[owner,'DENSE HISTORY FIXTURE']))[0].id;
+ const minute=new Date(Math.floor((Date.now()-3600000)/60000)*60000);
+ const end=new Date(minute.valueOf()+60000);
+ try{
+  await q(`insert into public.metric_samples(device_id,boot_id,seq,effective_at,uptime_s,cpu_pct)
+   select $1,$2,i,$3::timestamptz+i*interval '1 millisecond',i,50 from generate_series(1,2161) i`,[id,boot,minute]);
+  await q(`insert into public.metric_rollups(device_id,resolution_s,bucket,sample_count,cpu_sum,cpu_count,mem_available_count,temp_count)
+   values($1,60,$2,2161,50*2161,2161,0,0)`,[id,minute]);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${owner}'`);
+  const rows=await rpc('history',[id,minute,end]);
+  assert.equal(rows.length,1);
+  assert.equal(Number(rows[0].sample_count),2161);
+ }finally{await db.exec('reset role');await q('delete from public.devices where id=$1',[id]);}
 });
 test('maintenance deletes expired raw rows but replay cannot re-add their rollups',async()=>{
  const total=(await q('select sum(sample_count)::int n from public.metric_rollups where resolution_s=60'))[0].n;

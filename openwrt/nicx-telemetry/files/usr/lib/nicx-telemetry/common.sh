@@ -7,15 +7,23 @@ CONFIG_DIR=${NICX_CONFIG_DIR:-/etc/nicx-telemetry}
 credential="$CONFIG_DIR/token"
 queue_limit=1572864
 
-init_state() {
+init_state_dirs() {
     [ ! -L "$STATE" ] || return 1
     mkdir -p "$STATE" "$STATE/queue" "$STATE/logs" || return 1
     [ "$(stat -c %u "$STATE")" = "$(id -u)" ] || return 1
     chmod 700 "$STATE" "$STATE/queue" "$STATE/logs"
-    [ -f "$STATE/sequence" ] || echo 0 > "$STATE/sequence"
+}
+init_state() {
+    init_state_dirs || return 1
+    [ -f "$STATE/sequence" ] || echo 0 > "$STATE/sequence" || return 1
     [ -f "$STATE/dropped" ] || echo 0 > "$STATE/dropped"
 }
 number() { case "$1" in ''|*[!0-9]*|0?*) return 1;; esac; [ "${#1}" -le 9 ]; }
+agent_owner_alive() {
+    local owner
+    [ -r "$1/lock/pid" ] && IFS= read -r owner < "$1/lock/pid" &&
+        number "$owner" && [ "$owner" -gt 0 ] && kill -0 "$owner" 2>/dev/null
+}
 clamp() { if number "$1" && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; then echo "$1";else echo "$4";fi; }
 uget() { uci -q get "nicx-telemetry.main.$1" 2>/dev/null; }
 load_config() {
@@ -79,12 +87,20 @@ enqueue() {
 make_curl_config() {
     [ -f "$credential" ] && [ ! -L "$credential" ] || return 1
     [ "$(stat -c '%a:%u' "$credential")" = "600:$(id -u)" ] || return 1
-    IFS= read -r secret < "$credential"
+    local secret bound_endpoint bound_device
+    {
+        IFS= read -r secret || return 1
+        # Enrolled credentials are tied to the router identity confirmed by the Worker.
+        # Single-line credentials installed before this change remain usable.
+        if IFS= read -r bound_endpoint;then
+            IFS= read -r bound_device || return 1
+            [ "$bound_endpoint" = "$endpoint" ] && [ "$bound_device" = "$device_id" ] || return 1
+        fi
+    } < "$credential"
     # Token formats from Worker use hex or base64url. Fixed allowlist prevents curl config injection.
     case "$secret" in ''|*[!a-zA-Z0-9_-]*)unset secret;return 1;;esac
     [ "${#secret}" -ge 43 ] && [ "${#secret}" -le 128 ] || { unset secret;return 1; }
-    printf 'header = "Authorization: Bearer %s"\n' "$secret" > "$1"
-    chmod 600 "$1";unset secret
+    printf 'header = "Authorization: Bearer %s"\n' "$secret" > "$1" && chmod 600 "$1"
 }
 https() {
     # Credentials reside in a private config file, never curl arguments.
@@ -144,9 +160,14 @@ clock_now() {
 snapshot_create() (
     snapshot_id=$1;snapshot_kind=$2
     uptime_now;json_init;json_add_string request_id "$snapshot_id";json_add_string kind "$snapshot_kind"
+    read -r router_boot < /proc/sys/kernel/random/boot_id
+    json_add_string boot_id "$router_boot"
     json_add_string state queued;json_add_string reason '';json_add_double requested_uptime_s "$uptime";json_add_double updated_uptime_s "$uptime"
     snapshot_meta=$(mktemp "$STATE/snapshot-state.XXXXXX") || exit 1
-    json_dump > "$snapshot_meta";mv "$snapshot_meta" "$STATE/snapshot-status.json"
+    if ! json_dump > "$snapshot_meta" || ! mv "$snapshot_meta" "$STATE/snapshot-status.json";then
+        rm -f "$snapshot_meta"
+        exit 1
+    fi
 )
 snapshot_mark() (
     next_state=$1;next_reason=$2;expected_id=$3
@@ -157,6 +178,8 @@ snapshot_mark() (
     # Confirmed acknowledgments survive service restarts and duplicate-batch replay.
     case "$state" in uploaded|failed)exit 0;;esac
     uptime_now;json_init;json_add_string request_id "$request_id";json_add_string kind "$kind"
+    read -r router_boot < /proc/sys/kernel/random/boot_id
+    json_add_string boot_id "$router_boot"
     json_add_string state "$next_state";json_add_string reason "$next_reason"
     json_add_double requested_uptime_s "$requested_uptime_s";json_add_double updated_uptime_s "$uptime"
     snapshot_meta=$(mktemp "$STATE/snapshot-state.XXXXXX") || exit 1

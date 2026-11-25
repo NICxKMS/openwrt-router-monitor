@@ -32,6 +32,7 @@ export class Database {
         if(/unauthorized|invalid (?:device )?credential|invalid.token|revoked|expired.enrollment/i.test(message)||response.status===401)throw new ApiError(401,'unauthorized');
         if(/rate.limit|quota|too.many|storage.budget|storage.limit|device limit/i.test(message)||response.status===429)throw new ApiError(429,'rate_limited');
         if(['22023','23514','22P02','22007','22008'].includes(code))throw new ApiError(400,'validation_failed');
+        if(response.status===404&&code==='PGRST202'&&path.startsWith('/rest/v1/rpc/'))throw new ApiError(503,'backend_rpc_unavailable');
         if(/not.found/i.test(message))throw new ApiError(404,'not_found');
         if(response.status===403)throw new ApiError(403,'forbidden');
         console.warn(JSON.stringify({event:'supabase_request_failed',status:response.status,code:/^[A-Z0-9_]{1,24}$/.test(code)?code:'unknown'}));
