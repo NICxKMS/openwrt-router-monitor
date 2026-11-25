@@ -173,10 +173,16 @@ export function MonitorProvider({ session, children }: { session: Session; child
                   .order('seq', { ascending: false })
                   .limit(1)
                   .maybeSingle(),
-            db!.from('alerts').select('*').eq('device_id', device.id).order('opened_at', { ascending: false }).limit(25),
+            db!
+              .from('alerts')
+              .select('*')
+              .eq('device_id', device.id)
+              .is('resolved_at', null)
+              .order('opened_at', { ascending: false })
+              .limit(25),
           ]),
         );
-        const error = latestResult.error || historyResult.error || snapshotResult.error;
+        const error = latestResult.error || historyResult.error || snapshotResult.error || alertsResult.error;
         if (error) throw new Error(error.message);
         if (!active) return;
         setMetricError('');

@@ -36,11 +36,11 @@ test('owner can log in, inspect real-query pages and use mobile navigation', asy
       });
       return;
     }
-    if (path === '/api/v1/enroll/code') {
+    if (path === '/api/v1/enrollment') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ code: 'ENROLL-ABCD-1234-EFGH', expires_at: iso(-10) }),
+        body: JSON.stringify({ token: 'ENROLL-ABCD-1234-EFGH-5678', expires_at: iso(-10) }),
       });
       return;
     }
@@ -194,11 +194,11 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
       });
       return;
     }
-    if (path === '/api/v1/enroll/code') {
+    if (path === '/api/v1/enrollment') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ code: 'ENROLL-ABCD-1234-EFGH', expires_at: iso(-10) }),
+        body: JSON.stringify({ token: 'ENROLL-ABCD-1234-EFGH-5678', expires_at: iso(-10) }),
       });
       return;
     }
@@ -327,6 +327,9 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
 
     await page.getByRole('button', { name: 'Add router' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByLabel('Router name').fill('Home · Lab');
+    await page.getByRole('button', { name: 'Create enrollment code' }).click();
+    await expect(page.getByLabel('One-use enrollment code')).toHaveValue('ENROLL-ABCD-1234-EFGH-5678');
     await page.screenshot({ path: `test-results/desktop-enrollment-dialog.png`, fullPage: false });
     await page.getByRole('button', { name: 'Close' }).click();
   }

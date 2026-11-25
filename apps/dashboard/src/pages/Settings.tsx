@@ -172,22 +172,41 @@ export function Settings() {
           </div>
         </Card>
 
-        <Card title="Router identity">
-          <ActionForm
-            className="stack"
-            pending="Saving the router name…"
-            success="Router name saved in the cloud."
-            onSubmit={(_form, action) => mutate(path, { name }, 'PATCH', action.signal)}
-          >
-            <label>
-              Friendly name
-              <Input value={name} required maxLength={80} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <p className="small muted">
-              Device ID <code>{device?.id}</code>
-            </p>
-            <ActionSubmit pendingLabel="Saving name…">Save router name</ActionSubmit>
-          </ActionForm>
+        <Card title="Router identity" description="Cloud display name and enrolled device metadata.">
+          <div className="stack">
+            <ActionForm
+              className="stack"
+              pending="Saving the router name…"
+              success="Router name saved in the cloud."
+              onSubmit={(_form, action) => mutate(path, { name }, 'PATCH', action.signal)}
+            >
+              <label>
+                Friendly name
+                <Input value={name} required maxLength={80} onChange={(e) => setName(e.target.value)} />
+              </label>
+              <ActionSubmit pendingLabel="Saving name…">Save router name</ActionSubmit>
+            </ActionForm>
+            <dl className="fields">
+              <div>
+                <dt>Device ID</dt>
+                <dd>
+                  <code>{device?.id}</code>
+                </dd>
+              </div>
+              {device?.model && (
+                <div>
+                  <dt>Hardware model</dt>
+                  <dd>{device.model}</dd>
+                </div>
+              )}
+              {device?.last_seen_at && (
+                <div>
+                  <dt>Last contact</dt>
+                  <dd className="mono small">{date(device.last_seen_at, zone, true)}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
         </Card>
       </div>
 

@@ -28,7 +28,7 @@ vi.mock('../lib/data', async (importOriginal) => ({
   useMonitor: () => fixture.monitor,
 }));
 
-import { CPU, DNS, Overview, WiFi } from './Telemetry';
+import { CPU, DNS, Network, Overview, WiFi } from './Telemetry';
 import { ActionProvider } from '../components/Actions';
 
 const sample = {
@@ -146,5 +146,32 @@ describe('structured telemetry views', () => {
     expect(screen.getByText('/overlay')).toBeInTheDocument();
     expect(screen.getAllByText('320 / 65,536').length).toBeGreaterThan(0);
     expect(screen.getByText('fw4 table active')).toBeInTheDocument();
+    expect(screen.getAllByText('58.2 °C').length).toBe(3);
+    expect(screen.queryByText('58.2%')).not.toBeInTheDocument();
+  });
+
+  it('keeps omitted firewall offload flags as Unknown while showing explicit false as Disabled', () => {
+    fixture.monitor = {
+      ...fixture.monitor,
+      latest: {
+        ...sample,
+        detail: {
+          ...sample.detail,
+          firewall: { conntrack_count: 100, conntrack_max: 65536, flow_offloading: false },
+        },
+      },
+    };
+    render(<CPU />);
+    expect(screen.getByText('Disabled')).toBeInTheDocument();
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+  });
+
+  it('loads monthly quota usage independently of the selected chart range', async () => {
+    fixture.monitor = {
+      ...fixture.monitor,
+      device: { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200, billing_day: 1 } },
+    };
+    render(<Network />);
+    await waitFor(() => expect(screen.getByText(/0 GB used of 200 GB/)).toBeInTheDocument());
   });
 });

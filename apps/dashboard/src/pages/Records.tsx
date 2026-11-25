@@ -193,7 +193,8 @@ export function Logs() {
                   <button
                     type="button"
                     className="badge badge-btn"
-                    title={`Filter logs by ${svc}`}
+                    aria-pressed={applied.service === svc}
+                    title={applied.service === svc ? `Clear filter (${svc})` : `Filter logs by ${svc}`}
                     onClick={() => applyQuick({ service: applied.service === svc ? '' : svc })}
                   >
                     <code>{svc}</code>
@@ -913,9 +914,9 @@ export function Firmware() {
                   render: (_v, row) => {
                     const s = row.base as { mean: number | null; min: number | null; max: number | null };
                     if (s.mean === null) return '—';
-                    if (row.key === 'mem_available_kb') return `${mib(s.mean)} (${mib(s.min)}–${mib(s.max)})`;
+                    if (row.key === 'mem_available_kb') return <span className="mono">{`${mib(s.mean)} (${mib(s.min)}–${mib(s.max)})`}</span>;
                     const suffix = row.unit === '%' ? '%' : ` ${String(row.unit)}`;
-                    return `${fmt(s.mean, suffix)} (${fmt(s.min)}–${fmt(s.max)})`;
+                    return <span className="mono">{`${fmt(s.mean, suffix)} (${fmt(s.min)}–${fmt(s.max)})`}</span>;
                   },
                 },
                 {
@@ -924,9 +925,9 @@ export function Firmware() {
                   render: (_v, row) => {
                     const s = row.comp as { mean: number | null; min: number | null; max: number | null };
                     if (s.mean === null) return '—';
-                    if (row.key === 'mem_available_kb') return `${mib(s.mean)} (${mib(s.min)}–${mib(s.max)})`;
+                    if (row.key === 'mem_available_kb') return <span className="mono">{`${mib(s.mean)} (${mib(s.min)}–${mib(s.max)})`}</span>;
                     const suffix = row.unit === '%' ? '%' : ` ${String(row.unit)}`;
-                    return `${fmt(s.mean, suffix)} (${fmt(s.min)}–${fmt(s.max)})`;
+                    return <span className="mono">{`${fmt(s.mean, suffix)} (${fmt(s.min)}–${fmt(s.max)})`}</span>;
                   },
                 },
                 {
@@ -938,9 +939,9 @@ export function Firmware() {
                     if (bMean === null || cMean === null) return '—';
                     const diff = cMean - bMean;
                     const sign = diff > 0 ? '+' : '';
-                    if (row.key === 'mem_available_kb') return `${sign}${mib(diff)}`;
+                    if (row.key === 'mem_available_kb') return <span className="mono">{`${sign}${mib(diff)}`}</span>;
                     const suffix = row.unit === '%' ? '%' : ` ${String(row.unit)}`;
-                    return `${sign}${fmt(diff, suffix)}`;
+                    return <span className="mono">{`${sign}${fmt(diff, suffix)}`}</span>;
                   },
                 },
               ]}

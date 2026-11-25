@@ -345,7 +345,12 @@ export function CPU() {
                         {fmt(temp, ' °C')}
                       </span>
                     </div>
-                    <ProgressBar percent={temp} label={`${String(z.name)} temperature`} tone={temp !== null && temp >= 85 ? 'bad' : temp !== null && temp >= 75 ? 'warn' : 'accent'} />
+                    <ProgressBar
+                      percent={temp}
+                      valueLabel={fmt(temp, ' °C')}
+                      label={`${String(z.name)} temperature`}
+                      tone={temp !== null && temp >= 85 ? 'bad' : temp !== null && temp >= 75 ? 'warn' : 'accent'}
+                    />
                   </div>
                 );
               })}
@@ -406,18 +411,21 @@ export function CPU() {
                 <ProgressBar percent={conntrackPct} label="Conntrack table utilization" />
               </div>
               <div className="service-grid">
-                <div className="service-tile">
-                  <span>Software offload</span>
-                  <span className={`badge ${firewall.flow_offloading ? 'good' : ''}`}>
-                    {firewall.flow_offloading ? 'Enabled' : 'Disabled'}
-                  </span>
-                </div>
-                <div className="service-tile">
-                  <span>Hardware offload</span>
-                  <span className={`badge ${firewall.flow_offloading_hw ? 'good' : ''}`}>
-                    {firewall.flow_offloading_hw ? 'Enabled' : 'Disabled'}
-                  </span>
-                </div>
+                {(
+                  [
+                    ['flow_offloading', 'Software offload'],
+                    ['flow_offloading_hw', 'Hardware offload'],
+                  ] as const
+                ).map(([flagKey, flagLabel]) => {
+                  const val = firewall[flagKey];
+                  const label = val === true ? 'Enabled' : val === false ? 'Disabled' : 'Unknown';
+                  return (
+                    <div className="service-tile" key={flagKey}>
+                      <span>{flagLabel}</span>
+                      <span className={`badge ${val === true ? 'good' : ''}`}>{label}</span>
+                    </div>
+                  );
+                })}
                 {typeof serviceChecks.firewall === 'string' && (
                   <div className="service-tile">
                     <span>fw4 table check</span>
@@ -610,20 +618,27 @@ export function Network() {
   const billingDay = Math.min(28, Math.max(1, num(device?.config.billing_day) ?? 1));
   const dailyRows = (q.data || []) as Row[];
 
-  let cycleBytes = 0;
-  let cycleStartStr = '';
-  if (quotaGb > 0 && dailyRows.length) {
-    const now = new Date();
-    const y = now.getUTCFullYear();
-    const m = now.getUTCMonth();
-    const d = now.getUTCDate();
-    const start = new Date(Date.UTC(d >= billingDay ? y : y, d >= billingDay ? m : m - 1, billingDay));
-    cycleStartStr = start.toISOString().slice(0, 10);
-    cycleBytes = dailyRows
-      .filter((r) => String(r.day) >= cycleStartStr)
-      .reduce((sum, r) => sum + (num(r.rx_bytes) ?? 0) + (num(r.tx_bytes) ?? 0), 0);
-  }
-  const quotaPct = quotaGb > 0 ? (cycleBytes / (quotaGb * 1e9)) * 100 : null;
+  const now = new Date();
+  const cycleStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCDate() >= billingDay ? now.getUTCMonth() : now.getUTCMonth() - 1, billingDay));
+  const cycleStartStr = cycleStart.toISOString().slice(0, 10);
+
+  const cycleQuery = useQuery(
+    () =>
+      quotaGb > 0
+        ? db!
+            .from('bandwidth_daily')
+            .select('rx_bytes,tx_bytes')
+            .eq('device_id', device!.id)
+            .gte('day', cycleStartStr)
+            .limit(35)
+        : Promise.resolve({ data: [], error: null }),
+    [device?.id, tick, quotaGb, cycleStartStr],
+  );
+
+  const cycleRows = (cycleQuery.data || []) as Row[];
+  const cycleReady = quotaGb > 0 && !cycleQuery.loading && !cycleQuery.error;
+  const cycleBytes = cycleReady ? cycleRows.reduce((sum, r) => sum + (num(r.rx_bytes) ?? 0) + (num(r.tx_bytes) ?? 0), 0) : null;
+  const quotaPct = quotaGb > 0 && cycleBytes !== null ? (cycleBytes / (quotaGb * 1e9)) * 100 : null;
 
   return (
     <>
@@ -653,15 +668,27 @@ export function Network() {
       {quotaGb > 0 && (
         <Card
           title="Monthly internet quota"
-          description={`Observed WAN traffic since UTC billing cycle start (${cycleStartStr || `day ${billingDay}`}).`}
+          description={`Observed WAN traffic since UTC billing cycle start (${cycleStartStr}).`}
         >
-          <div className="tile-row-top" style={{ marginBottom: 10 }}>
-            <strong>
-              {fmt(cycleBytes / 1e9, ' GB', 2)} used of {quotaGb} GB
-            </strong>
-            <span className="small muted">Observed coverage only · not ISP billing meter</span>
-          </div>
-          <ProgressBar percent={quotaPct} label="Monthly quota utilization" />
+          {cycleQuery.loading ? (
+            <p className="small muted" role="status">
+              Loading billing-cycle quota usage…
+            </p>
+          ) : cycleQuery.error ? (
+            <p className="notice danger" role="alert">
+              {cycleQuery.error}
+            </p>
+          ) : (
+            <>
+              <div className="tile-row-top" style={{ marginBottom: 10 }}>
+                <strong>
+                  {cycleBytes !== null ? fmt(cycleBytes / 1e9, ' GB', 2) : '—'} used of {quotaGb} GB
+                </strong>
+                <span className="small muted">Observed coverage only · not ISP billing meter</span>
+              </div>
+              <ProgressBar percent={quotaPct} label="Monthly quota utilization" />
+            </>
+          )}
         </Card>
       )}
 
@@ -682,13 +709,16 @@ export function Network() {
                 label: 'Uplink',
                 render: (v) => <span className="badge good">{v === 'usbwan' ? 'USB WAN' : 'Ethernet WAN'}</span>,
               },
-              { key: 'rx_bytes', label: 'Received', render: bytes },
-              { key: 'tx_bytes', label: 'Sent', render: bytes },
+              { key: 'rx_bytes', label: 'Received', render: (v) => <span className="mono">{bytes(v)}</span> },
+              { key: 'tx_bytes', label: 'Sent', render: (v) => <span className="mono">{bytes(v)}</span> },
               {
                 key: 'total',
                 label: 'Total',
-                render: (_v, row) =>
-                  row.rx_bytes != null || row.tx_bytes != null ? bytes((num(row.rx_bytes) ?? 0) + (num(row.tx_bytes) ?? 0)) : '—',
+                render: (_v, row) => (
+                  <span className="mono">
+                    {row.rx_bytes != null || row.tx_bytes != null ? bytes((num(row.rx_bytes) ?? 0) + (num(row.tx_bytes) ?? 0)) : '—'}
+                  </span>
+                ),
               },
               {
                 key: 'coverage_s',
@@ -696,7 +726,11 @@ export function Network() {
                 render: (v) => {
                   const sec = num(v);
                   const hrs = sec !== null ? sec / 3600 : null;
-                  return hrs !== null ? `${fmt(hrs, ' h')} (${fmt(Math.min(100, (sec! / 86400) * 100), '%', 0)})` : '—';
+                  return (
+                    <span className="mono">
+                      {hrs !== null ? `${fmt(hrs, ' h')} (${fmt(Math.min(100, (sec! / 86400) * 100), '%', 0)})` : '—'}
+                    </span>
+                  );
                 },
               },
             ]}

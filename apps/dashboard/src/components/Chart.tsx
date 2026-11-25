@@ -5,9 +5,11 @@ import { DataZoomComponent, GridComponent, TooltipComponent, LegendComponent, Ax
 import { CanvasRenderer } from 'echarts/renderers';
 import type { ECharts } from 'echarts/core';
 import { useMonitor } from '../lib/data';
-import { axisTimeLabel, compactAxisTime, durationShort, rate, type Sample } from '../lib/model';
+import { axisTimeLabel, compactAxisTime, durationShort, rate, timeRangeKey, type Sample } from '../lib/model';
 
 echarts.use([LineChart, DataZoomComponent, GridComponent, TooltipComponent, LegendComponent, AxisPointerComponent, CanvasRenderer]);
+
+const sharedZoomByKey = new Map<string, { start?: number; end?: number }>();
 
 export type ChartMode =
   | 'cpu_pct'
@@ -55,6 +57,7 @@ export default function Chart({
   memTotalKb,
   compare,
   height,
+  group,
 }: {
   data: Sample[];
   metric: ChartMode | keyof Sample;
@@ -63,11 +66,14 @@ export default function Chart({
   memTotalKb?: number | null;
   compare?: CompareData;
   height?: number;
+  group?: string;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const instance = useRef<ECharts | null>(null);
-  const { zone, theme } = useMonitor();
+  const { zone, theme, device, range } = useMonitor();
   const [error, setError] = useState('');
+  const chartGroup = group || (compare ? 'compare' : 'telemetry');
+  const zoomScopeKey = `${device?.id || 'none'}:${range ? timeRangeKey(range) : 'default'}:${chartGroup}`;
 
   useEffect(() => {
     if (!element.current) return;
@@ -90,6 +96,9 @@ export default function Chart({
     try {
       const chart = echarts.init(element.current, undefined, { renderer: 'canvas' });
       instance.current = chart;
+      chart.group = chartGroup;
+      echarts.connect?.(chartGroup);
+      const savedZoom = sharedZoomByKey.get(zoomScopeKey);
       const isCompare = Boolean(compare);
       const timestamps = data.map((d) => Date.parse(String(d.bucket || d.observed_at || d.received_at))).filter(Number.isFinite);
       const spanMs = timestamps.length > 1 ? Math.max(...timestamps) - Math.min(...timestamps) : 6 * 3600000;
@@ -223,6 +232,7 @@ export default function Chart({
           backgroundColor: palette.tooltipBg,
           borderColor: palette.tooltipBorder,
           borderWidth: 1,
+          extraCssText: 'box-shadow: none;',
           textStyle: { color: palette.tooltipText, fontSize: 12 },
           axisPointer: { type: 'cross', lineStyle: { color: palette.axisLine }, crossStyle: { color: palette.axisLine } },
           valueFormatter: (v: unknown) =>
@@ -253,7 +263,7 @@ export default function Chart({
                   formatter: (params: { value: unknown }) => `Uptime ${durationShort(Number(params.value))}`,
                 },
               },
-              axisLabel: { color: palette.text, hideOverlap: true, formatter: (v: number) => durationShort(v) },
+              axisLabel: { color: palette.text, hideOverlap: true, fontFamily: 'JetBrains Mono, ui-monospace, monospace', fontSize: 11, formatter: (v: number) => durationShort(v) },
               axisLine: { lineStyle: { color: palette.axisLine } },
               splitLine: { show: true, lineStyle: { color: palette.split } },
             }
@@ -271,6 +281,8 @@ export default function Chart({
               axisLabel: {
                 color: palette.text,
                 hideOverlap: true,
+                fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                fontSize: 11,
                 formatter: (v: number) => compactAxisTime(v, zone, spanMs),
               },
               axisLine: { lineStyle: { color: palette.axisLine } },
@@ -279,16 +291,26 @@ export default function Chart({
           type: 'value',
           name: effectiveUnit.trim(),
           nameTextStyle: { color: palette.text, fontSize: 11 },
-          axisLabel: { color: palette.text },
+          splitNumber: 4,
+          axisLabel: { color: palette.text, fontFamily: 'JetBrains Mono, ui-monospace, monospace', fontSize: 11 },
           splitLine: { lineStyle: { color: palette.split } },
           ...yBounds,
         },
         dataZoom: [
-          { type: 'inside', filterMode: 'none' },
           {
+            id: 'x-zoom-inside',
+            type: 'inside',
+            filterMode: 'none',
+            ...(savedZoom?.start !== undefined ? { start: savedZoom.start } : {}),
+            ...(savedZoom?.end !== undefined ? { end: savedZoom.end } : {}),
+          },
+          {
+            id: 'x-zoom-slider',
             type: 'slider',
             height: 12,
             bottom: 8,
+            ...(savedZoom?.start !== undefined ? { start: savedZoom.start } : {}),
+            ...(savedZoom?.end !== undefined ? { end: savedZoom.end } : {}),
             backgroundColor: 'transparent',
             borderColor: palette.tooltipBorder,
             fillerColor: palette.areaFill,
@@ -309,6 +331,14 @@ export default function Chart({
         series,
       });
 
+      chart.on?.('datazoom', () => {
+        const currentOption = chart.getOption?.() as { dataZoom?: Array<{ start?: number; end?: number }> } | undefined;
+        const zoomEntry = currentOption?.dataZoom?.[0];
+        if (zoomEntry && typeof zoomEntry.start === 'number' && typeof zoomEntry.end === 'number') {
+          sharedZoomByKey.set(zoomScopeKey, { start: zoomEntry.start, end: zoomEntry.end });
+        }
+      });
+
       observer = new ResizeObserver(() => chart.resize());
       observer.observe(element.current);
     } catch {
@@ -320,7 +350,7 @@ export default function Chart({
       instance.current?.dispose();
       instance.current = null;
     };
-  }, [data, metric, label, unit, memTotalKb, compare, zone, theme]);
+  }, [data, metric, label, unit, memTotalKb, compare, zone, theme, chartGroup, zoomScopeKey]);
 
   return (
     <>

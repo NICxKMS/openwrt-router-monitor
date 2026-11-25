@@ -389,10 +389,12 @@ export function ProgressBar({
   percent,
   label,
   tone,
+  valueLabel,
 }: {
   percent: number | null;
   label?: string;
   tone?: 'good' | 'warn' | 'bad' | 'accent';
+  valueLabel?: string;
 }) {
   if (percent === null || !Number.isFinite(percent)) return <span className="muted">—</span>;
   const clamped = Math.max(0, Math.min(100, percent));
@@ -402,7 +404,7 @@ export function ProgressBar({
       <div className="meter-track">
         <div className="meter-fill" style={{ width: clamped > 0 ? `max(3px, ${clamped}%)` : '0%' }} />
       </div>
-      <span>{fmt(clamped, '%')}</span>
+      <span>{valueLabel ?? fmt(clamped, '%')}</span>
     </div>
   );
 }

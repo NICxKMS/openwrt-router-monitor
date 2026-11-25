@@ -254,6 +254,10 @@ function Shell() {
     return () => window.removeEventListener('hashchange', pop);
   }, []);
 
+  useEffect(() => {
+    window.scrollTo?.(0, 0);
+  }, [page]);
+
   const current = pages.find((p) => p.name === page) || pages[0];
   const Page = current.component;
   const seen = device?.last_seen_at ? Date.parse(device.last_seen_at) : null;
