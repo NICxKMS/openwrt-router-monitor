@@ -3,7 +3,7 @@ import { Copy, KeyRound, Plus, ShieldAlert } from 'lucide-react';
 import { ownerApi, db } from '../lib/client';
 import { copyText } from '../lib/async';
 import { useMonitor, useQuery } from '../lib/data';
-import { bytes, cloudConfig, date, fmt, retainedSampleEstimate, type Row } from '../lib/model';
+import { bytes, cloudConfig, date, fmt, retainedSampleEstimate, sentenceCase, type Row } from '../lib/model';
 import { Button, Card, Dialog, Input, Notice, QueryState } from '../components/ui/primitives';
 import { ActionButton, ActionForm, ActionSubmit } from '../components/Actions';
 import { DataTable, Fields } from '../components/Shared';
@@ -414,16 +414,16 @@ function Usage({ config, zone }: { config: Row; zone: string }) {
 
   return (
     <Card title="Monitoring budget" description="Planning estimates are not provider metering or billing. Logs and optional diagnostics add variable usage.">
-      <div className="stats">
-        <div>
+      <div className="stats" style={{ marginBottom: 16 }}>
+        <div className="stat">
           <span className="eyebrow">Samples / day / router</span>
           <strong className="budget-number">{fmt(86400 / interval, '', 0)}</strong>
         </div>
-        <div>
+        <div className="stat">
           <span className="eyebrow">Upload requests / month</span>
           <strong className="budget-number">{fmt((30 * 86400) / upload, '', 0)}</strong>
         </div>
-        <div>
+        <div className="stat">
           <span className="eyebrow">Retained raw samples</span>
           <strong className="budget-number">{fmt(retainedSampleEstimate(interval, retention), '', 0)}</strong>
         </div>
@@ -456,7 +456,7 @@ function Usage({ config, zone }: { config: Row; zone: string }) {
             }
             return (
               <div className="kv-box" key={k}>
-                <span style={{ textTransform: 'capitalize' }}>{k.replaceAll('_', ' ')}</span>
+                <span>{sentenceCase(k.replaceAll('_', ' '))}</span>
                 <strong>{formatted}</strong>
               </div>
             );

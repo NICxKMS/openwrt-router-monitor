@@ -14,6 +14,7 @@ import {
   relativeAge,
   rows,
   ruleCategoryLabel,
+  sentenceCase,
   serviceCheckLabel,
   uptime,
   vmstatLabel,
@@ -87,7 +88,7 @@ export function Overview() {
               <div className="alert-strip-item" key={a.id}>
                 <div>
                   <span className={`badge ${a.severity === 'critical' ? 'bad' : a.severity === 'warning' ? 'warn' : 'info'}`}>
-                    {a.severity}
+                    {sentenceCase(a.severity)}
                   </span>{' '}
                   <span className="badge">{ruleCategoryLabel(a.rule_key)}</span>{' '}
                   <span>{a.message}</span>{' '}
@@ -656,7 +657,7 @@ export function Network() {
         >
           <div className="tile-row-top" style={{ marginBottom: 10 }}>
             <strong>
-              {bytes(cycleBytes)} used of {quotaGb} GB
+              {fmt(cycleBytes / 1e9, ' GB', 2)} used of {quotaGb} GB
             </strong>
             <span className="small muted">Observed coverage only · not ISP billing meter</span>
           </div>
@@ -772,11 +773,11 @@ export function WiFi() {
                     <div>
                       <strong>{friendly}</strong>
                       <div className="small muted">
-                        <code>{id.slice(0, 12)}…</code>
+                        <code title={id}>{id.slice(0, 12)}…</code>
                       </div>
                     </div>
                   ) : (
-                    <code>{id}</code>
+                    <code title={id}>{id}</code>
                   );
                 },
               },

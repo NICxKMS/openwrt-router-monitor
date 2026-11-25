@@ -13,6 +13,7 @@ import {
   rate,
   relativeAge,
   ruleCategoryLabel,
+  sentenceCase,
   timeRangeKey,
   type Row,
   type Sample,
@@ -158,7 +159,7 @@ export function Logs() {
               key: 'received_at',
               label: 'Received',
               render: (v, row) => (
-                <div>
+                <div style={{ whiteSpace: 'nowrap' }}>
                   <div className="mono small">{date(v, zone, true)}</div>
                   {row.boot_id ? (
                     <div className="small muted">
@@ -478,7 +479,7 @@ export function Alerts() {
               key: 'opened_at',
               label: 'Opened',
               render: (v) => (
-                <div>
+                <div style={{ whiteSpace: 'nowrap' }}>
                   <div className="mono small">{date(v, zone, true)}</div>
                   <div className="small muted">{relativeAge(v)}</div>
                 </div>
@@ -489,7 +490,9 @@ export function Alerts() {
               label: 'Severity',
               render: (v, row) => (
                 <div className="button-group">
-                  <span className={`badge ${v === 'critical' ? 'bad' : v === 'warning' ? 'warn' : 'info'}`}>{String(v ?? 'info')}</span>
+                  <span className={`badge ${v === 'critical' ? 'bad' : v === 'warning' ? 'warn' : 'info'}`}>
+                    {sentenceCase(String(v ?? 'info'))}
+                  </span>
                   <span className="badge">{ruleCategoryLabel(row.rule_key)}</span>
                 </div>
               ),
@@ -587,9 +590,11 @@ function AlertRules() {
               label: 'Trigger',
               render: (v, row) => {
                 const info = ALERT_METRICS[String(row.metric)];
+                const unitSuffix = !info?.unit ? '' : info.unit === '%' ? '%' : ` ${info.unit}`;
                 return (
                   <span className="mono">
-                    {v === 'lt' ? '<' : '>'} {String(row.threshold)} {info?.unit || ''}
+                    {v === 'lt' ? '<' : '>'} {String(row.threshold)}
+                    {unitSuffix}
                   </span>
                 );
               },
@@ -884,7 +889,8 @@ export function Firmware() {
                     const s = row.base as { mean: number | null; min: number | null; max: number | null };
                     if (s.mean === null) return '—';
                     if (row.key === 'mem_available_kb') return `${mib(s.mean)} (${mib(s.min)}–${mib(s.max)})`;
-                    return `${fmt(s.mean, ` ${String(row.unit)}`)} (${fmt(s.min)}–${fmt(s.max)})`;
+                    const suffix = row.unit === '%' ? '%' : ` ${String(row.unit)}`;
+                    return `${fmt(s.mean, suffix)} (${fmt(s.min)}–${fmt(s.max)})`;
                   },
                 },
                 {
@@ -894,7 +900,8 @@ export function Firmware() {
                     const s = row.comp as { mean: number | null; min: number | null; max: number | null };
                     if (s.mean === null) return '—';
                     if (row.key === 'mem_available_kb') return `${mib(s.mean)} (${mib(s.min)}–${mib(s.max)})`;
-                    return `${fmt(s.mean, ` ${String(row.unit)}`)} (${fmt(s.min)}–${fmt(s.max)})`;
+                    const suffix = row.unit === '%' ? '%' : ` ${String(row.unit)}`;
+                    return `${fmt(s.mean, suffix)} (${fmt(s.min)}–${fmt(s.max)})`;
                   },
                 },
                 {
@@ -907,7 +914,8 @@ export function Firmware() {
                     const diff = cMean - bMean;
                     const sign = diff > 0 ? '+' : '';
                     if (row.key === 'mem_available_kb') return `${sign}${mib(diff)}`;
-                    return `${sign}${fmt(diff, ` ${String(row.unit)}`)}`;
+                    const suffix = row.unit === '%' ? '%' : ` ${String(row.unit)}`;
+                    return `${sign}${fmt(diff, suffix)}`;
                   },
                 },
               ]}
@@ -919,11 +927,16 @@ export function Firmware() {
         )}
       </Card>
       <div className="two-col">
-        {[a, b].filter(Boolean).map((id) => (
-          <Card key={id} title={`Boot ${id.slice(0, 8)} · reported inventory`}>
-            <Fields value={boots.find((v: Row) => v.boot_id === id)?.inventory} />
-          </Card>
-        ))}
+        {[
+          ['Baseline', a],
+          ['Comparison', b],
+        ]
+          .filter((entry): entry is [string, string] => Boolean(entry[1]))
+          .map(([role, id]) => (
+            <Card key={`${role}-${id}`} title={`${role} · Boot ${id.slice(0, 8)} · reported inventory`}>
+              <Fields value={boots.find((v: Row) => v.boot_id === id)?.inventory} />
+            </Card>
+          ))}
       </div>
     </>
   );

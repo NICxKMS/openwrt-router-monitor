@@ -484,9 +484,14 @@ function Shell() {
                     To (browser local time)
                     <Input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} required />
                   </label>
-                  <Button variant="default" type="submit">
-                    Apply to all pages
-                  </Button>
+                  <div className="button-group">
+                    <Button variant="default" type="submit">
+                      Apply to all pages
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => setCustom(false)}>
+                      Cancel
+                    </Button>
+                  </div>
                   {rangeError && (
                     <p role="alert" className="small error-text">
                       {rangeError}
