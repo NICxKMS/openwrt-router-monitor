@@ -34,12 +34,13 @@
     "user confirmed local connection test and dashboard observations",
     "release 2 signed APK upgrade preserved config and credentials",
     "real snapshot UUID matched explicit stored cloud receipt",
-    "desktop/mobile action progress and failure browser checks"
+    "desktop/mobile action progress and failure browser checks",
+    "initial actual-router CPU/RSS/buffer observation documented"
   ],
   "pending": [
     "live Realtime delivery",
-    "physical router resource benchmarks",
-    "long-term quota observation"
+    "long-term quota observation",
+    "controlled routing/Wi-Fi benchmarks and unique memory attribution"
   ],
   "worker_version": "3f182dbb-acc0-4883-9a6d-aee26cc60e80",
   "openwrt_package_release": "1.0.0-r2",

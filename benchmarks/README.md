@@ -1,6 +1,6 @@
 # Measurement evidence
 
-No physical JIDU6111 measurements are included. The shell agent fixture tests and any host timings describe this development machine, not router overhead.
+Initial physical JIDU6111 measurements are recorded in [the short-run report](jidu6111-2026-11-25.md). They are limited observations under normal household traffic, not controlled forwarding benchmarks. The shell agent fixture tests and host timings remain separate evidence.
 
 Copy `router-benchmark.sh` to `/tmp` on the router after installing the packages. Run comparable observation windows with telemetry stopped and enabled. The script itself is read-only and never changes routing, offload, Wi-Fi, services, debugfs, packages or credentials. Stop/start telemetry yourself in LuCI between runs; do not stop network services. Save results off the router before reboot.
 

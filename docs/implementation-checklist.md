@@ -30,7 +30,7 @@ Statuses describe evidence, not intent. A checked implementation item does not i
 - 42 router/host checks pass with native BusyBox and independently built jshn; signed release2 APK dependency closure verified.
 - Six desktop/mobile browser checks pass with clearly labeled test-only fixtures.
 - Phase 6 now has actual physical-router→Worker→PostgreSQL→dashboard acceptance, plus the local tests.
-- Phase 7 is partial; see limitations.md for precise unimplemented optional collectors. Phase 9 has implemented logs/retention/alert delivery code; real recipient test remains pending. Phase 11 lacks real router benchmarks.
+- Phase 7 is partial; see limitations.md for optional collectors. Phase 9 has logs/retention/cloud alerts; recipient delivery is deferred. Phase 11 now has an initial actual-router CPU/RSS/buffer observation; controlled routing/Wi-Fi and peak/HTTPS attribution remain pending.
 - User confirmed router192.168.50.1, JIDU6111, SNAPSHOT r0+38470-c3af7ee2f2, kernel6.18.60, APK and171524 KiB free overlay. SSH password works in user terminal; agent SSH key is not authorized.
 - Owner Auth user exists, public signup is disabled and one actual router is enrolled. No production fixture telemetry inserted.
 
