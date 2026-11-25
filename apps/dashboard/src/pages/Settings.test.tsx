@@ -3,12 +3,12 @@ import '@testing-library/jest-dom/vitest';
 import React from 'react';
 import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-const mock=vi.hoisted(()=>({api:vi.fn(),refresh:vi.fn(),deviceId:'device-a',clients:[] as {client_id:string;name:string}[]}));
+const mock=vi.hoisted(()=>({api:vi.fn(),refresh:vi.fn(),deviceId:'device-a',intervals:{} as Record<string,number>,clients:[] as {client_id:string;name:string}[]}));
 vi.mock('../lib/client',()=>({ownerApi:mock.api,db:{from:(table:string)=>{const b:Record<string,unknown>={then:(resolve:(v:unknown)=>unknown)=>Promise.resolve({data:table==='client_names'?mock.clients:[],error:null}).then(resolve)};for(const key of ['select','eq','order','limit'])b[key]=()=>b;return b;}}}));
-vi.mock('../lib/data',async importOriginal=>({...await importOriginal<typeof import('../lib/data')>(),useMonitor:()=>({device:{id:mock.deviceId,name:'Home',config:{buffer_kb:4096,privacy_addresses:true,log_severity:7,diagnostics_enabled:true,logs_enabled:false,sample_interval:30}},tick:0,zone:'Asia/Kolkata',setZone:vi.fn(),theme:'dark',setTheme:vi.fn(),refreshSeconds:30,setRefreshSeconds:vi.fn(),refresh:mock.refresh})}));
+vi.mock('../lib/data',async importOriginal=>({...await importOriginal<typeof import('../lib/data')>(),useMonitor:()=>({device:{id:mock.deviceId,name:'Home',config:{buffer_kb:4096,privacy_addresses:true,log_severity:7,diagnostics_enabled:true,logs_enabled:false,sample_interval:30,...mock.intervals}},tick:0,zone:'Asia/Kolkata',setZone:vi.fn(),theme:'dark',setTheme:vi.fn(),refreshSeconds:30,setRefreshSeconds:vi.fn(),refresh:mock.refresh})}));
 import {Enrollment,Settings} from './Settings';
 import {ActionProvider} from '../components/Actions';
-beforeEach(()=>{mock.deviceId='device-a';mock.clients=[];});
+beforeEach(()=>{mock.deviceId='device-a';mock.intervals={};mock.clients=[];});
 afterEach(()=>{cleanup();vi.clearAllMocks();vi.useRealTimers();});
 it('keeps router-local controls read-only and excludes them from cloud saves',async()=>{mock.api.mockResolvedValue({ok:true});render(<Settings/>);expect((screen.getByLabelText('Memory queue limit') as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText('Log severity threshold') as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText('Address privacy') as HTMLInputElement).readOnly).toBe(true);fireEvent.click(screen.getByRole('button',{name:'Save collection settings'}));await waitFor(()=>expect(mock.api).toHaveBeenCalledWith('/api/v1/devices/device-a/config',{diagnostics_enabled:true,logs_enabled:false,sample_interval:30},'POST',expect.anything()));expect(screen.getByText(/Enabling either here also requires permission/)).toBeTruthy();});
 
@@ -20,3 +20,19 @@ it('suppresses a credential result arriving after its action deadline',async()=>
 
 it('submits populated client-name fields while the form is pending',async()=>{mock.api.mockResolvedValue({ok:true});render(<ActionProvider><Settings/></ActionProvider>);fireEvent.change(screen.getByLabelText('Local client identifier'),{target:{value:'client_123'}});fireEvent.change(screen.getByPlaceholderText('Living room laptop'),{target:{value:'Laptop'}});fireEvent.click(screen.getByRole('button',{name:'Save client name'}));await waitFor(()=>expect(mock.api).toHaveBeenCalledWith('/api/v1/devices/device-a/client-names/client_123',{name:'Laptop'},'PUT',expect.anything()));});
 it('submits an edited name from an existing client row',async()=>{mock.clients=[{client_id:'client_123',name:'Old name'}];mock.api.mockResolvedValue({ok:true});render(<ActionProvider><Settings/></ActionProvider>);const input=await screen.findByLabelText('Name for client_123');fireEvent.change(input,{target:{value:'New name'}});fireEvent.click(screen.getByRole('button',{name:'Save'}));await waitFor(()=>expect(mock.api).toHaveBeenCalledWith('/api/v1/devices/device-a/client-names/client_123',{name:'New name'},'PUT',expect.anything()));});
+
+it('keeps legacy collection settings editable within the agent limits', async () => {
+  mock.intervals={wifi_interval:1200,process_interval:2400};
+  mock.api.mockResolvedValue({ok:true});
+  render(<Settings/>);
+  const wifi=screen.getByLabelText('Wi-Fi interval (s)') as HTMLInputElement;
+  const processes=screen.getByLabelText('Process interval (s)') as HTMLInputElement;
+  expect(wifi.value).toBe('900');
+  expect(processes.value).toBe('1800');
+  expect(wifi.form?.checkValidity()).toBe(true);
+  fireEvent.change(screen.getByLabelText('Sample interval (s)'),{target:{value:'20'}});
+  fireEvent.click(screen.getByRole('button',{name:'Save collection settings'}));
+  await waitFor(()=>expect(mock.api).toHaveBeenCalledWith('/api/v1/devices/device-a/config',
+    {diagnostics_enabled:true,logs_enabled:false,sample_interval:20,wifi_interval:900,process_interval:1800},
+    'POST',expect.anything()));
+});

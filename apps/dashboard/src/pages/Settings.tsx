@@ -28,7 +28,17 @@ export function Settings(){
  },[deviceId]);
  const [name,setName]=useState(device?.name||''),[config,setConfig]=useState<Row>({}),[credential,setCredential]=useState<{deviceId:string;token:string}|null>(null),[confirmation,setConfirmation]=useState('');
  const token=credential?.deviceId===device!.id?credential.token:'';const setToken=(value:string)=>setCredential(value?{deviceId:context.current.deviceId,token:value}:null);
- useEffect(()=>{setName(device?.name||'');setConfig({...device?.config});setToken('');setConfirmation('');},[device?.id]);
+ useEffect(()=>{
+  const savedConfig={...device?.config};
+  for(const [key,,,max] of configFields){
+   const value=savedConfig[key];
+   if(typeof value==='number'&&value>max)savedConfig[key]=max;
+  }
+  setName(device?.name||'');
+  setConfig(savedConfig);
+  setToken('');
+  setConfirmation('');
+ },[device?.id]);
  const clients=useQuery(()=>db!.from('client_names').select('*').eq('device_id',device!.id).order('client_id').limit(200),[device?.id,tick]);
  const path=`/api/v1/devices/${device!.id}`;
  async function mutate(endpoint:string,body?:unknown,method='POST',signal?:AbortSignal){const result=await ownerApi(endpoint,body,method,signal);signal?.throwIfAborted();refresh();return result;}

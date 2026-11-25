@@ -1,6 +1,6 @@
 # Router installation and operation
 
-Release 2 was installed and enrolled on the JIDU6111 on 25 November 2026. The router sent real telemetry, and an initial CPU, RSS and buffer observation is documented in the benchmark report. Controlled routing and Wi-Fi tests and long-term quota observation remain pending. It uses the router's BusyBox ash, awk, ubus and JSON shell library; no Python, Node.js or database credential is installed on the router. The web dashboard and Worker are separate deployments.
+Release 2 was installed and enrolled on the JIDU6111 on 25 November 2026. The router sent real telemetry, and an initial CPU, RSS and buffer observation is documented in the benchmark report. Controlled routing and Wi-Fi tests and long-term quota observation remain pending. The packages use the router's BusyBox ash, awk and flock applets, ubus and the JSON shell library; no Python, Node.js or database credential is installed on the router. The web dashboard and Worker are separate deployments.
 
 ## Build the two packages
 
