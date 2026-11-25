@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {Copy,KeyRound,Plus,ShieldAlert} from 'lucide-react';
 import {ownerApi,db} from '../lib/client';
 import {copyText} from '../lib/async';
@@ -20,7 +20,12 @@ export function Enrollment(){
 }
 export function Settings(){
  const {device,zone,setZone,theme,setTheme,refresh,tick,refreshSeconds,setRefreshSeconds}=useMonitor();
- const context=useRef({deviceId:device!.id,generation:0});if(context.current.deviceId!==device!.id)context.current={deviceId:device!.id,generation:context.current.generation+1};useEffect(()=>()=>{context.current.generation++;},[]);
+ const deviceId=device!.id;
+ const context=useRef({deviceId,generation:0});
+ useLayoutEffect(()=>{
+  context.current={deviceId,generation:context.current.generation+1};
+  return ()=>{context.current.generation++;};
+ },[deviceId]);
  const [name,setName]=useState(device?.name||''),[config,setConfig]=useState<Row>({}),[credential,setCredential]=useState<{deviceId:string;token:string}|null>(null),[confirmation,setConfirmation]=useState('');
  const token=credential?.deviceId===device!.id?credential.token:'';const setToken=(value:string)=>setCredential(value?{deviceId:context.current.deviceId,token:value}:null);
  useEffect(()=>{setName(device?.name||'');setConfig({...device?.config});setToken('');setConfirmation('');},[device?.id]);

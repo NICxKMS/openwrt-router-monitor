@@ -4,7 +4,7 @@ set -eu
 revision=a396f38a8568a1d670c240465cd8d24fdfdf6463
 prefix=${1:?Usage: build-test-jshn.sh ABSOLUTE_INSTALL_DIRECTORY}
 case "$prefix" in /*) ;; *) echo 'Use an absolute installation directory.' >&2; exit 1;; esac
-if [ -x "$prefix/bin/jshn" ] && [ "$(cat "$prefix/.nicx-libubox-revision" 2>/dev/null)" = "$revision" ]; then exit 0; fi
+if [ -x "$prefix/bin/jshn" ] && [ -r "$prefix/share/libubox/jshn.sh" ] && [ "$(cat "$prefix/.nicx-libubox-revision" 2>/dev/null)" = "$revision" ]; then exit 0; fi
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 git init -q "$temporary/source"
@@ -16,4 +16,5 @@ cmake -S "$temporary/source" -B "$temporary/build" -DBUILD_LUA=OFF -DBUILD_EXAMP
 cmake --build "$temporary/build" --parallel 2
 cmake --install "$temporary/build"
 test -x "$prefix/bin/jshn"
+test -r "$prefix/share/libubox/jshn.sh"
 printf '%s\n' "$revision" > "$prefix/.nicx-libubox-revision"
