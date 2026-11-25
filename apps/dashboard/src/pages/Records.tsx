@@ -58,7 +58,7 @@ export function Logs() {
     if (applied.search) query = query.ilike('message', '%' + applied.search.replace(/[\\%_]/g, '\\$&') + '%');
     if (cursor) query = query.or(`received_at.lt.${cursor.time},and(received_at.eq.${cursor.time},id.lt.${cursor.id})`);
     return query;
-  }, [device?.id, queryRange, applied, cursor?.id]);
+  }, [device?.id, rangeIdentity, queryRange, applied, cursor?.time, cursor?.id]);
 
   const data = (q.data || []).slice(0, 50) as Row[];
   const hasFilters = applied.level !== '7' || applied.service !== '' || applied.search !== '';
@@ -75,7 +75,7 @@ export function Logs() {
     <Card
       title="System logs"
       description="Grouped messages · server-receipt date filter · newest first"
-      action={<Export data={q.loading || q.error ? [] : data} name="system-logs" />}
+      action={<Export data={!q.isCurrent || q.loading || q.error ? [] : data} name="system-logs" />}
     >
       <div className="filter-chips" role="group" aria-label="Quick log filters">
         {[
@@ -285,7 +285,7 @@ export function Diagnostics() {
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .range(page * 20, page * 20 + 20),
-    [device?.id, page, queryRange, revision],
+    [device?.id, rangeIdentity, page, queryRange, revision],
   );
 
   return (
@@ -297,7 +297,7 @@ export function Diagnostics() {
       <Card
         title="Received diagnostic snapshots"
         description="Cloud receipt and private archive creation are separate stages."
-        action={<Export data={q.loading || q.error ? [] : (q.data || []).slice(0, 20)} name="diagnostics" />}
+        action={<Export data={!q.isCurrent || q.loading || q.error ? [] : (q.data || []).slice(0, 20)} name="diagnostics" />}
       >
         <p className="record-state">
           Records last checked {date(q.refreshedAt, zone, true)}

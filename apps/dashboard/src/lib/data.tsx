@@ -286,23 +286,23 @@ export function MonitorProvider({ session, children }: { session: Session; child
     </QueryContext.Provider>
   );
 }
-
 export function useQuery<T>(query: () => PromiseLike<{ data: T | null; error: { message: string } | null }>, deps: unknown[]) {
-  const [data, setData] = useState<T | null>(null);
+  const [result, setResult] = useState<{ data: T | null; inputs: unknown[] } | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const registry = useContext(QueryContext);
   const id = useId();
+  const inputs = [...deps, registry?.epoch];
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     const work = withTimeout(Promise.resolve().then(query))
-      .then((result) => {
-        if (result.error) throw new Error(result.error.message);
+      .then((response) => {
+        if (response.error) throw new Error(response.error.message);
         if (active) {
-          setData(result.data);
+          setResult({ data: response.data, inputs });
           setError('');
           setRefreshedAt(new Date().toISOString());
         }
@@ -319,7 +319,10 @@ export function useQuery<T>(query: () => PromiseLike<{ data: T | null; error: { 
     return () => {
       active = false;
     };
-  }, [...deps, registry?.epoch]);
+  }, inputs);
 
-  return { data, error, loading, refreshedAt };
+  // A render can have new inputs before the effect marks its query as loading.
+  const isCurrent =
+    result !== null && result.inputs.length === inputs.length && inputs.every((input, index) => Object.is(input, result.inputs[index]));
+  return { data: result?.data ?? null, error, loading, refreshedAt, isCurrent };
 }
