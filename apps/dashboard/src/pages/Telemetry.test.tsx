@@ -1,23 +1,46 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Row } from '../lib/model';
 
 const fixture = vi.hoisted(() => ({
   monitor: {} as Record<string, unknown>,
-  clientNames: [] as { client_id: string; name: string }[],
+  clientNames: [] as { device_id: string; client_id: string; name: string }[],
+  bandwidthDaily: [] as Row[],
 }));
 
 vi.mock('../lib/client', () => ({
   ownerApi: vi.fn(),
   db: {
     from: (table: string) => {
-      const data = table === 'client_names' ? fixture.clientNames : [];
-      const builder: Record<string, unknown> = {
+      let data: Row[] = table === 'client_names' ? fixture.clientNames : table === 'bandwidth_daily' ? fixture.bandwidthDaily : [];
+      const builder = {
+        select: () => builder,
+        eq: (column: string, value: string) => {
+          data = data.filter((row) => row[column] === value);
+          return builder;
+        },
+        gte: (column: string, value: string) => {
+          data = data.filter((row) => String(row[column]) >= value);
+          return builder;
+        },
+        lte: (column: string, value: string) => {
+          data = data.filter((row) => String(row[column]) <= value);
+          return builder;
+        },
+        order: () => builder,
+        limit: (count: number) => {
+          data = data.slice(0, count);
+          return builder;
+        },
+        range: (from: number, to: number) => {
+          data = data.slice(from, to + 1);
+          return builder;
+        },
         then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data, error: null }).then(resolve),
       };
-      for (const m of ['select', 'eq', 'gte', 'lte', 'order', 'limit']) builder[m] = () => builder;
       return builder;
     },
   },
@@ -27,6 +50,9 @@ vi.mock('../lib/data', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/data')>()),
   useMonitor: () => fixture.monitor,
 }));
+
+// Page tests verify telemetry around the chart. Canvas rendering runs in Playwright.
+vi.mock('../components/Chart', () => ({ default: () => null }));
 
 import { CPU, DNS, Network, Overview, WiFi } from './Telemetry';
 import { ActionProvider } from '../components/Actions';
@@ -86,7 +112,8 @@ const sample = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  fixture.clientNames = [{ client_id: 'salt_client_abc', name: 'Workstation' }];
+  fixture.clientNames = [{ device_id: 'dev-1', client_id: 'salt_client_abc', name: 'Workstation' }];
+  fixture.bandwidthDaily = [];
   fixture.monitor = {
     device: { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: {} },
     latest: sample,
@@ -111,7 +138,10 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe('structured telemetry views', () => {
   it('surfaces open alerts and core KPIs on Overview', () => {
@@ -132,6 +162,26 @@ describe('structured telemetry views', () => {
     expect(screen.getByText('5,180 MHz · 80 MHz')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('Workstation')).toBeInTheDocument());
     expect(screen.getAllByText('-52 dBm').length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    { reported: [0, undefined], expected: '—' },
+    { reported: [2, -1], expected: '—' },
+    { reported: [0, 0], expected: '0' },
+    { reported: [1, 2], expected: '3' },
+  ])('shows $expected associated stations for radio counts $reported', async ({ reported, expected }) => {
+    fixture.monitor.latest = {
+      ...sample,
+      detail: {
+        ...sample.detail,
+        wifi: { ...sample.detail.wifi, radios: reported.map((stations, index) => ({ name: `wlan${index}`, stations })) },
+      },
+    };
+    await act(async () => {
+      render(<WiFi />);
+    });
+    const stationStat = screen.getByText('Associated stations', { selector: '.eyebrow' }).closest('.stat');
+    expect(stationStat?.querySelector('strong')?.textContent).toBe(expected);
   });
 
   it('renders AdBlock Fast status from services and service_checks on DNS page', () => {
@@ -167,11 +217,65 @@ describe('structured telemetry views', () => {
   });
 
   it('loads monthly quota usage independently of the selected chart range', async () => {
+    vi.setSystemTime(new Date('2026-01-31T12:00:00Z'));
+    const range = { from: '2026-01-31T06:00:00Z', to: '2026-01-31T12:00:00Z', live: false, hours: 6 };
     fixture.monitor = {
       ...fixture.monitor,
       device: { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200, billing_day: 1 } },
+      range,
     };
-    render(<Network />);
-    await waitFor(() => expect(screen.getByText(/0 GB used of 200 GB/)).toBeInTheDocument());
+    fixture.bandwidthDaily = Array.from({ length: 31 }, (_, day) =>
+      ['eth0', 'eth1', 'usb0', 'usb1'].map((name) => ({
+        device_id: 'dev-1',
+        day: `2026-01-${String(day + 1).padStart(2, '0')}`,
+        interface_name: name,
+        role: name.startsWith('eth') ? 'wan' : 'usbwan',
+        rx_bytes: 900_000_000,
+        tx_bytes: 100_000_000,
+      })),
+    ).flat();
+    fixture.bandwidthDaily.push(
+      { ...fixture.bandwidthDaily[0], day: '2025-12-31' },
+      { ...fixture.bandwidthDaily[0], day: '2026-02-01' },
+      { ...fixture.bandwidthDaily[0], device_id: 'dev-2' },
+    );
+
+    const { rerender } = render(<Network />);
+    expect(await screen.findByText('124 GB used of 200 GB')).toBeInTheDocument();
+    expect(screen.getAllByText('2026-01-31')).toHaveLength(4);
+    expect(screen.queryByText('2026-01-30')).toBeNull();
+
+    fixture.monitor.range = { ...range, from: '2026-01-30T12:00:00Z', hours: 24 };
+    rerender(<Network />);
+    await waitFor(() => expect(screen.getAllByText('2026-01-30')).toHaveLength(4));
+    expect(screen.getByText('124 GB used of 200 GB')).toBeInTheDocument();
+  });
+
+  it('hides the previous quota usage from the first render for another router', async () => {
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    const router = { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200 } };
+    fixture.monitor.device = router;
+    fixture.bandwidthDaily = [
+      { device_id: 'dev-1', day: '2026-11-25', rx_bytes: 2_000_000_000 },
+      { device_id: 'dev-2', day: '2026-11-25', rx_bytes: 1_000_000_000 },
+    ];
+    const commits: string[] = [];
+
+    function QuotaRender() {
+      const root = React.useRef<HTMLDivElement>(null);
+      // Observe the DOM commit before useQuery's effect starts the next read.
+      React.useLayoutEffect(() => {
+        commits.push(root.current?.textContent ?? '');
+      });
+      return <div ref={root}><Network /></div>;
+    }
+
+    const { rerender } = render(<QuotaRender />);
+    expect(await screen.findByText('2 GB used of 200 GB')).toBeInTheDocument();
+
+    fixture.monitor.device = { ...router, id: 'dev-2', config: { monthly_quota_gb: 100 } };
+    rerender(<QuotaRender />);
+    expect(commits.at(-1)).toContain('— used of 100 GB');
+    expect(await screen.findByText('1 GB used of 100 GB')).toBeInTheDocument();
   });
 });

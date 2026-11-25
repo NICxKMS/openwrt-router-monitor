@@ -1,4 +1,14 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+async function navigate(page: Page, name: string, mobile: boolean) {
+  if (mobile) await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('link', { name, exact: true }).click();
+  if (mobile) await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeHidden();
+}
+
+async function expectChart(page: Page, name: RegExp) {
+  await expect(page.getByRole('img', { name }).locator('canvas').first()).toBeVisible();
+}
 
 // Synthetic network responses exist only in this browser-test harness. Never bundled.
 test('owner can log in, inspect real-query pages and use mobile navigation', async ({ page }, testInfo) => {
@@ -71,31 +81,29 @@ test('owner can log in, inspect real-query pages and use mobile navigation', asy
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await expect(page.locator('.device-strip strong')).toHaveText('SIMULATED FIXTURE · JIDU6111');
 
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  await page.getByRole('link', { name: 'Memory', exact: true }).click();
+  const mobile = testInfo.project.name === 'mobile';
+  await navigate(page, 'Memory', mobile);
   await expect(page.getByRole('heading', { name: 'Memory', exact: true })).toBeVisible();
 
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  await page.getByRole('link', { name: 'Logs', exact: true }).click();
+  await navigate(page, 'Logs', mobile);
   await expect(page.getByRole('heading', { name: 'Logs', exact: true })).toBeVisible();
 
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await navigate(page, 'Overview', mobile);
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
-  await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20000 });
+  await expectChart(page, /^Processor utilization history/);
 
-  // Wait briefly for mobile sidebar slide-out transition to settle before capturing fullPage screenshot.
-  await page.waitForTimeout(200);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-simulated-fixture.png`, fullPage: true });
   expect(errors).toEqual([]);
 });
 
 test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light theme', async ({ page }, testInfo) => {
+  const mobile = testInfo.project.name === 'mobile';
   const owner = '00000000-0000-4000-8000-000000000001';
   const device = '10000000-0000-4000-8000-000000000001';
   const boot = '20000000-0000-4000-8000-000000000001';
+  const comparisonBoot = '20000000-0000-4000-8000-000000000002';
   const nowMs = Date.now();
   const iso = (offsetMin: number) => new Date(nowMs - offsetMin * 60000).toISOString();
   const now = iso(0);
@@ -110,15 +118,19 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     last_seen_at: now, created_at: iso(1440), revoked_at: null,
     config: { upload_interval: 30, sample_interval: 10, billing_day: 1, monthly_quota_gb: 500 },
   };
-  const firmwareHistory = Array.from({ length: 12 }, (_, idx) => ({
+  const firmwareHistory = (cpuStart: number) => Array.from({ length: 12 }, (_, idx) => ({
     uptime_s: 600 + idx * 300,
-    cpu_pct: 20 + (idx % 4) * 5,
+    cpu_pct: cpuStart + idx,
     mem_available_kb: 200000 - idx * 800,
     temp_c: 53 + (idx % 3),
     rx_bytes_delta: 3_000_000,
     tx_bytes_delta: 600_000,
     elapsed_s: 10,
   }));
+  const firmwareBoots = new Map([
+    [`eq.${boot}`, firmwareHistory(20)],
+    [`eq.${comparisonBoot}`, firmwareHistory(35)],
+  ]);
   const history = Array.from({ length: 24 }, (_, idx) => {
     const minsAgo = (23 - idx) * 15;
     const cpu = 18 + Math.round(Math.sin(idx / 3) * 14 + idx * 0.4);
@@ -215,10 +227,16 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     else if (path.endsWith('/devices')) body = [router];
     else if (path.endsWith('/device_latest')) body = latest;
     else if (path.endsWith('/rpc/history')) body = history;
-    else if (path.endsWith('/metric_samples')) body = isSingle ? history[history.length - 1] : firmwareHistory;
+    else if (path.endsWith('/metric_samples')) {
+      const bootSamples = firmwareBoots.get(url.searchParams.get('boot_id') ?? '') ?? [];
+      const uptimeFilters = url.searchParams.getAll('uptime_s');
+      const minUptime = Number(uptimeFilters.find((filter) => filter.startsWith('gte.'))?.slice(4));
+      const maxUptime = Number(uptimeFilters.find((filter) => filter.startsWith('lte.'))?.slice(4));
+      body = isSingle ? history[history.length - 1] : bootSamples.filter(({ uptime_s }) => uptime_s >= minUptime && uptime_s <= maxUptime);
+    }
     else if (path.endsWith('/boot_sessions')) body = [
       { device_id: device, boot_id: boot, first_seen_at: iso(1440), last_seen_at: now, inventory: { model: 'JIDU6111', release: 'OpenWrt SNAPSHOT 6.18.60', kernel: '6.18.60' } },
-      { device_id: device, boot_id: '20000000-0000-4000-8000-000000000002', first_seen_at: iso(4320), last_seen_at: iso(1445), inventory: { model: 'JIDU6111', release: 'OpenWrt SNAPSHOT 6.18.59', kernel: '6.18.59' } },
+      { device_id: device, boot_id: comparisonBoot, first_seen_at: iso(4320), last_seen_at: iso(1445), inventory: { model: 'JIDU6111', release: 'OpenWrt SNAPSHOT 6.18.59', kernel: '6.18.59' } },
     ];
     else if (path.endsWith('/alerts')) body = [{ id: 'a1', device_id: device, rule_key: 'reachability:ipv6', severity: 'warning', message: 'IPv6 probe latency elevated briefly', opened_at: iso(45), resolved_at: null, acknowledged_at: null }];
     else if (path.endsWith('/alert_rules')) body = [{ id: 'r1', device_id: device, metric: 'cpu_pct', operator: 'gt', threshold: 90, sustain_s: 120, hysteresis: 5, cooldown_s: 900, enabled: true }];
@@ -233,7 +251,20 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
 
+  async function compareFirmware() {
+    await navigate(page, 'Firmware comparison', mobile);
+    await page.getByLabel('Baseline boot').selectOption(boot);
+    await page.getByLabel('Comparison boot').selectOption(comparisonBoot);
+    await page.getByRole('button', { name: 'Compare', exact: true }).click();
+    await expect(page.getByText(/Matched uptime:/)).toBeVisible();
+    const processor = page.getByRole('row', { name: /Processor utilization/ }).getByRole('cell');
+    await expect(processor.nth(1)).toHaveText('25% (20–30)');
+    await expect(processor.nth(2)).toHaveText('40% (35–45)');
+    await expectChart(page, /^Uptime-aligned cpu_pct history/);
+  }
+
   await page.goto('/');
+  await expect(page.getByLabel('Email address')).toBeVisible();
   await page.screenshot({ path: `test-results/${testInfo.project.name}-login.png`, fullPage: true });
   await page.getByLabel('Email address').fill('fixture@example.test');
   await page.getByLabel('Password', { exact: true }).fill('fixture-password');
@@ -241,30 +272,26 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
 
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Active alerts' })).toBeVisible();
-  await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20000 });
+  await expectChart(page, /^Processor utilization history/);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-rich-overview.png`, fullPage: true });
 
   // Visit Wi-Fi and verify friendly client label join + station table
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  await page.getByRole('link', { name: 'Wi-Fi', exact: true }).click();
+  await navigate(page, 'Wi-Fi', mobile);
   await expect(page.getByText('Living Room Laptop')).toBeVisible();
-  await page.waitForTimeout(150);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-rich-wifi.png`, fullPage: true });
 
   // Visit CPU & system
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  await page.getByRole('link', { name: 'CPU & system', exact: true }).click();
+  await navigate(page, 'CPU & system', mobile);
   await expect(page.getByText('/overlay')).toBeVisible();
-  await page.waitForTimeout(150);
+  await expectChart(page, /^Processor utilization history/);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-rich-cpu.png`, fullPage: true });
 
   // Test light theme + historical window banner on Network
   await page.getByRole('button', { name: 'Switch to light theme' }).click();
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: 'Open navigation' }).click();
-  await page.getByRole('link', { name: 'Network', exact: true }).click();
+  await navigate(page, 'Network', mobile);
   await page.getByRole('button', { name: 'Previous time window' }).click();
   await expect(page.getByRole('button', { name: 'Return to Live' })).toBeVisible();
-  await page.waitForTimeout(150);
+  await expectChart(page, /^Internet throughput/);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-light-network-history.png`, fullPage: true });
   await page.getByRole('button', { name: 'Return to Live' }).click();
 
@@ -273,6 +300,7 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     await page.getByRole('button', { name: 'Switch to dark theme' }).click();
     await page.getByRole('link', { name: 'Memory', exact: true }).click();
     await expect(page.getByText('Kernel memory categories')).toBeVisible();
+    await expectChart(page, /^Available memory history/);
     await page.screenshot({ path: `test-results/desktop-rich-memory.png`, fullPage: true });
 
     await page.getByRole('link', { name: 'Logs', exact: true }).click();
@@ -297,12 +325,7 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     await expect(page.getByText('Ad blocking (AdBlock Fast)')).toBeVisible();
     await page.screenshot({ path: `test-results/desktop-rich-dns.png`, fullPage: true });
 
-    await page.getByRole('link', { name: 'Firmware comparison', exact: true }).click();
-    await page.getByLabel('Baseline boot').selectOption(boot);
-    await page.getByLabel('Comparison boot').selectOption('20000000-0000-4000-8000-000000000002');
-    await page.getByRole('button', { name: 'Compare', exact: true }).click();
-    await expect(page.getByText(/Matched uptime:/)).toBeVisible();
-    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20000 });
+    await compareFirmware();
     await page.screenshot({ path: `test-results/desktop-rich-firmware.png`, fullPage: true });
 
     await page.getByRole('button', { name: 'Switch to light theme' }).click();
@@ -334,47 +357,32 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     await page.getByRole('button', { name: 'Close' }).click();
   }
 
-  if (testInfo.project.name === 'mobile') {
+  if (mobile) {
     await page.getByRole('button', { name: 'Switch to dark theme' }).click();
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: 'Memory', exact: true }).click();
+    await navigate(page, 'Memory', mobile);
     await expect(page.getByText('Kernel memory categories')).toBeVisible();
-    await page.waitForTimeout(150);
+    await expectChart(page, /^Available memory history/);
     await page.screenshot({ path: `test-results/mobile-rich-memory.png`, fullPage: true });
 
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: 'Diagnostics', exact: true }).click();
+    await navigate(page, 'Diagnostics', mobile);
     await page.locator('.record summary').first().click();
-    await page.waitForTimeout(150);
+    await expect(page.getByText(/Installed packages/)).toBeVisible();
     await page.screenshot({ path: `test-results/mobile-rich-diagnostics.png`, fullPage: true });
 
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: 'Firmware comparison', exact: true }).click();
-    await page.getByLabel('Baseline boot').selectOption(boot);
-    await page.getByLabel('Comparison boot').selectOption('20000000-0000-4000-8000-000000000002');
-    await page.getByRole('button', { name: 'Compare', exact: true }).click();
-    await expect(page.getByText(/Matched uptime:/)).toBeVisible();
-    await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20000 });
-    await page.waitForTimeout(150);
+    await compareFirmware();
     await page.screenshot({ path: `test-results/mobile-rich-firmware.png`, fullPage: true });
 
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: 'Logs', exact: true }).click();
+    await navigate(page, 'Logs', mobile);
     await expect(page.getByText('nameserver 1.1.1.1 resumed normal response')).toBeVisible();
-    await page.waitForTimeout(150);
     await page.screenshot({ path: `test-results/mobile-rich-logs.png`, fullPage: true });
 
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: 'Alerts', exact: true }).click();
+    await navigate(page, 'Alerts', mobile);
     await expect(page.getByRole('heading', { name: 'Threshold rules' })).toBeVisible();
-    await page.waitForTimeout(150);
     await page.screenshot({ path: `test-results/mobile-rich-alerts.png`, fullPage: true });
 
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await navigate(page, 'Settings', mobile);
     await page.getByRole('button', { name: 'Read measured project usage' }).click();
     await expect(page.getByText('Database size bytes')).toBeVisible();
-    await page.waitForTimeout(150);
     await page.screenshot({ path: `test-results/mobile-rich-settings.png`, fullPage: true });
   }
 
