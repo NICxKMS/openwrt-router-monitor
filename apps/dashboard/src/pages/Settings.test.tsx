@@ -10,7 +10,7 @@ import {Enrollment,Settings} from './Settings';
 import {ActionProvider} from '../components/Actions';
 beforeEach(()=>{mock.deviceId='device-a';mock.intervals={};mock.clients=[];});
 afterEach(()=>{cleanup();vi.clearAllMocks();vi.useRealTimers();});
-it('keeps router-local controls read-only and excludes them from cloud saves',async()=>{mock.api.mockResolvedValue({ok:true});render(<Settings/>);expect((screen.getByLabelText('Memory queue limit') as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText('Log severity threshold') as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText('Address privacy') as HTMLInputElement).readOnly).toBe(true);fireEvent.click(screen.getByRole('button',{name:'Save collection settings'}));await waitFor(()=>expect(mock.api).toHaveBeenCalledWith('/api/v1/devices/device-a/config',{diagnostics_enabled:true,logs_enabled:false,sample_interval:30},'POST',expect.anything()));expect(screen.getByText(/Enabling either here also requires permission/)).toBeTruthy();});
+it('keeps router-local controls read-only and excludes them from cloud saves',async()=>{mock.api.mockResolvedValue({ok:true});render(<Settings/>);expect((screen.getByLabelText('Memory queue limit') as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText('Log severity threshold') as HTMLInputElement).readOnly).toBe(true);expect((screen.getByLabelText('Address privacy') as HTMLInputElement).readOnly).toBe(true);fireEvent.change(screen.getByLabelText('Sample interval (s)'),{target:{value:'20'}});fireEvent.click(screen.getByRole('button',{name:'Save collection settings'}));await waitFor(()=>expect(mock.api).toHaveBeenCalledWith('/api/v1/devices/device-a/config',{sample_interval:20},'POST',expect.anything()));expect(screen.getByText(/Enabling either here also requires permission/)).toBeTruthy();});
 
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(yes=>{resolve=yes;});return {promise,resolve};}
 it('does not reveal a previous router credential after switching routers during rotation',async()=>{const response=deferred<{token:string}>();mock.api.mockReturnValue(response.promise);const view=render(<ActionProvider><Settings/></ActionProvider>);fireEvent.click(screen.getByRole('button',{name:'Rotate device credential'}));await waitFor(()=>expect(mock.api).toHaveBeenCalled());mock.deviceId='device-b';view.rerender(<ActionProvider><Settings/></ActionProvider>);const secret='nxd_'+('f'.repeat(64));await act(async()=>response.resolve({token:secret}));await waitFor(()=>expect(screen.getByRole('alert').textContent).toContain('previous router credential was rotated'));expect(screen.queryByDisplayValue(secret)).toBeNull();expect(document.body.textContent).not.toContain(secret);});
@@ -33,6 +33,6 @@ it('keeps legacy collection settings editable within the agent limits', async ()
   fireEvent.change(screen.getByLabelText('Sample interval (s)'),{target:{value:'20'}});
   fireEvent.click(screen.getByRole('button',{name:'Save collection settings'}));
   await waitFor(()=>expect(mock.api).toHaveBeenCalledWith('/api/v1/devices/device-a/config',
-    {diagnostics_enabled:true,logs_enabled:false,sample_interval:20,wifi_interval:900,process_interval:1800},
+    {sample_interval:20},
     'POST',expect.anything()));
 });

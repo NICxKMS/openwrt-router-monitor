@@ -22,6 +22,7 @@ export function Settings(){
  const {device,zone,setZone,theme,setTheme,refresh,tick,refreshSeconds,setRefreshSeconds}=useMonitor();
  const deviceId=device!.id;
  const context=useRef({deviceId,generation:0});
+ const appliedConfig=useRef<Row>({});
  useLayoutEffect(()=>{
   context.current={deviceId,generation:context.current.generation+1};
   return ()=>{context.current.generation++;};
@@ -35,6 +36,7 @@ export function Settings(){
    if(typeof value==='number'&&value>max)savedConfig[key]=max;
   }
   setName(device?.name||'');
+  appliedConfig.current=savedConfig;
   setConfig(savedConfig);
   setToken('');
   setConfirmation('');
@@ -54,7 +56,12 @@ export function Settings(){
    </ActionForm></Card>
   </div>
   <Card title="Agent collection and retention" description="Defaults are shown for unconfigured cloud values. The router applies the slower of its local and cloud collection intervals.">
-   <ActionForm className="stack" pending="Saving collection permissions and intervals…" success="Cloud configuration saved. The router receives it with its next successful upload; local permissions still apply." onSubmit={(_form,action)=>mutate(path+'/config',cloudConfig(config),'POST',action.signal)}>
+   <ActionForm className="stack" pending="Saving collection permissions and intervals…" success="Cloud configuration saved. The router receives it with its next successful upload; local permissions still apply." onSubmit={async(_form,action)=>{
+    const generation=context.current.generation;
+    const changes=Object.fromEntries(Object.entries(cloudConfig(config)).filter(([key,value])=>!Object.is(value,appliedConfig.current[key])));
+    await mutate(path+'/config',changes,'POST',action.signal);
+    if(context.current.generation===generation)appliedConfig.current={...appliedConfig.current,...changes};
+   }}>
     <div className="form-grid">{configFields.map(([key,label,min,max,fallback])=><label key={key}>{label}<Input type="number" required min={min} max={max} step="1" value={String(config[key]??fallback)} onChange={e=>setConfig(c=>({...c,[key]:Number(e.target.value)}))}/></label>)}</div>
     <div className="check-group">{[['logs_enabled','Permit locally enabled logs',true],['diagnostics_enabled','Permit locally enabled diagnostics',false]].map(([key,label,fallback])=><label className="check" key={String(key)}><input type="checkbox" checked={Boolean(config[String(key)]??fallback)} onChange={e=>setConfig(c=>({...c,[String(key)]:e.target.checked}))}/>{label}</label>)}</div>
     <Notice>Cloud permission can stop logs or diagnostics. Enabling either here also requires permission in the router's local setup. Faster sampling than the local limits is not enabled remotely.</Notice><ActionSubmit pendingLabel="Saving settings…">Save collection settings</ActionSubmit>
