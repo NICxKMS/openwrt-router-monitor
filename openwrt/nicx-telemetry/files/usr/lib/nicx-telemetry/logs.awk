@@ -22,8 +22,13 @@ function redact(s, lower) {
     gsub(/[^ -~]/,"?",s)
     return substr(s,1,1024)
 }
+function clock_is_synced( line,readable) {
+    if(!stream)return synced
+    readable=((getline line < clock_marker)>=0)
+    close(clock_marker)
+    return readable
+}
 function emit( i,k,path,chunk,sep,allowed) {
-    if(stream)synced=(system("test -f /tmp/nicx-telemetry-clock-synced")==0)
     if(!groups)return
     if(stream){
         slot=(slot+1)%4;path=spool "/" slot ".ready"
@@ -43,21 +48,26 @@ function emit( i,k,path,chunk,sep,allowed) {
     if(dropfile!=""){print dropped+0 > dropfile;close(dropfile)}
 }
 BEGIN {split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",months," ");for(i=1;i<=12;i++)month[months[i]]=i;
-sev["emerg"]=0;sev["alert"]=1;sev["crit"]=2;sev["err"]=3;sev["warn"]=4;sev["warning"]=4;sev["notice"]=5;sev["info"]=6;sev["debug"]=7;if(!budget)budget=100}
+sev["emerg"]=0;sev["alert"]=1;sev["crit"]=2;sev["err"]=3;sev["warn"]=4;sev["warning"]=4;sev["notice"]=5;sev["info"]=6;sev["debug"]=7;if(!budget)budget=100;if(clock_marker=="")clock_marker="/tmp/nicx-telemetry-clock-synced"}
 {
     if(stream && $0=="__NICX_TICK__"){emit();next}
     # DNS query/reply logging and URL-like request records are never exported.
     if(tolower($0) ~ /(query\[|reply .* is |\/dns-query|https?:\/\/|dnsmasq.*(cached|forwarded))/)next
     n=split($6,p,"."); severity=(p[n] in sev)?sev[p[n]]:5
     if(severity>threshold)next
+    service=$7;sub(/\[[0-9]+\]:?$/,"",service);sub(/:$/,"",service)
+    if(service !~ /^[a-zA-Z0-9_.\/-]+$/)service="system"
+    message=$0;for(i=1;i<=7;i++) sub(/^[^ \t]+[ \t]+/,"",message)
+    # DNS backends may log queried names under many reply prefixes. Retain only
+    # known operational formats which carry no hostnames or query data.
+    if(service ~ /(^|\/)dnsmasq([.-]|$)/ && !(message ~ /^started, version [0-9.]+ (cachesize [0-9]+|cache disabled)$/ ||
+        message ~ /^exiting on receipt of SIG(TERM|INT)$/ ||
+        message ~ /^compile time options: ([a-zA-Z0-9_-]+ ?)+$/))next
     if(stream){
         # Leave 20% of the occurrence budget available for later critical messages.
         if(seen>=budget || (severity>3 && low_seen>=int(budget*0.8))){dropped++;next}
         seen++;if(severity>3)low_seen++
     }else if(++seen>budget){dropped++;next}
-    service=$7;sub(/\[[0-9]+\]:?$/,"",service);sub(/:$/,"",service)
-    if(service !~ /^[a-zA-Z0-9_.\/-]+$/)service="system"
-    message=$0;for(i=1;i<=7;i++) sub(/^[^ \t]+[ \t]+/,"",message)
     message=redact(message);key=severity SUBSEP service SUBSEP message
     if(!(key in counts)){
         slot_index=0
@@ -71,7 +81,7 @@ sev["emerg"]=0;sev["alert"]=1;sev["crit"]=2;sev["err"]=3;sev["warn"]=4;sev["warn
         order[slot_index]=key;msg[key]=message;svc[key]=substr(service,1,64);level[key]=severity
     }
     timestamp="null"
-    if(synced && ($2 in month) && $5>=2025 && $5<=2100 && $3>=1 && $3<=31 && $4~/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/)
+    if(clock_is_synced() && ($2 in month) && $5>=2025 && $5<=2100 && $3>=1 && $3<=31 && $4~/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/)
         timestamp=quote(sprintf("%04d-%02d-%02dT%sZ",$5,month[$2],$3,$4))
     if(!counts[key])first[key]=timestamp
     last[key]=timestamp

@@ -55,6 +55,42 @@ enqueue s "$STATE/item";seal_batch;cat "$STATE/pending";echo;seal_batch;cat "$ST
         self.assertEqual(first['logs'],[])
         self.assertEqual(list((self.state/'queue').glob('*')),[])
 
+    def test_failed_seal_keeps_queue_and_snapshot_for_retry(self):
+        for fault in ('part_write', 'body_write', 'rename'):
+            with self.subTest(fault=fault):
+                self.env['NICX_SEAL_FAULT']=fault
+                output=self.shell('''device_id=11111111-1111-4111-8111-111111111111;boot_id=22222222-2222-4222-8222-222222222222
+diagnostics_enabled=1;remote_diagnostics_enabled=1
+echo '{}' > "$STATE/snapshot";echo '{}' > "$STATE/queue/0000000001.s"
+mv() {
+    case "$NICX_SEAL_FAULT:$1" in
+        rename:*/pending.new)return 1;;
+    esac
+    command mv "$@"
+}
+cat() {
+    case "$NICX_SEAL_FAULT:$1" in
+        part_write:*/queue/*|body_write:*/samples.part)printf '{';return 1;;
+    esac
+    command cat "$@"
+}
+if seal_batch;then exit 41;fi
+test -s "$STATE/queue/0000000001.s" && test -s "$STATE/snapshot" && test ! -e "$STATE/pending" || exit 42
+NICX_SEAL_FAULT=;seal_batch || exit 43
+command cat "$STATE/pending"
+rm -f "$STATE/pending" "$STATE/snapshot.pending"
+''')
+                self.assertEqual(json.loads(output)['diagnostics'],{})
+                self.assertEqual(json.loads(output)['samples'],[{}])
+
+    def test_collector_timestamps_all_interfaces_in_one_sweep(self):
+        output=self.shell('''ud=0
+uptime_now() { ud=$((ud+1));uptime=$ud; }
+collect_network
+printf '%s\n' "$ud"
+''')
+        self.assertEqual(output.strip(),'1')
+
     def test_live_host_collectors_produce_bounded_sample(self):
         output=self.shell('collect_detail;collect_processes;collect_wifi;collect_connectivity;collect_sample;cat "$STATE/sample"')
         sample=json.loads(output)
@@ -180,6 +216,14 @@ esac
         salt.chmod(0o644)
         output=self.shell('collect_wifi;cat "$STATE/wifi.json"')
         self.assertEqual(json.loads(output)['wifi']['radios'][0]['clients'],[])
+        salt.chmod(0o600)
+        for value in ('', 'e'*64, 'x'*64+'\n', 'abcd\n'):
+            with self.subTest(value=value):
+                salt.write_text(value)
+                output=self.shell('collect_wifi;cat "$STATE/wifi.json"')
+                radio=json.loads(output)['wifi']['radios'][0]
+                self.assertEqual(radio['stations'],1)
+                self.assertEqual(radio['clients'],[])
 
     def test_http_success_requires_positive_acceptance(self):
         self.write_tool('curl', '''#!/usr/bin/env python3
@@ -190,38 +234,168 @@ Path(a[a.index('--output')+1]).write_text('{"accepted":false}')
 print('200',end='')
 ''')
         cred=self.state/'credential';cred.write_text('a'*64+'\n');cred.chmod(0o600)
-        output=self.shell('credential="$STATE/credential"; endpoint=https://fixture.workers.dev; echo "{}" > "$STATE/pending"; upload_batch; test -s "$STATE/pending"; echo retained')
+        output=self.shell('credential="$STATE/credential"; endpoint=https://fixture.workers.dev; echo "{}" > "$STATE/pending"; upload_batch; test -s "$STATE/pending" || exit 1; echo retained')
         self.assertIn('retained',output)
         self.assertNotIn('a'*64,(self.state/'args.json').read_text())
         self.assertFalse((self.state/'auth').exists())
 
-    def test_rpc_enroll_accepts_created_and_private_credential_rotation(self):
-        config=self.state/'config';config.mkdir()
-        self.env['NICX_CONFIG_DIR']=str(config)
-        self.write_tool('uci','#!/bin/sh\ncase "$*" in *get*enabled*)echo 1;;esac\nexit 0\n')
-        self.write_tool('timeout','#!/bin/sh\nif [ "$2" = /etc/init.d/nicx-telemetry ];then : > "$NICX_STATE/restarted";exit 0;fi\nexec /usr/bin/timeout "$@"\n')
-        self.write_tool('curl', '#!/usr/bin/env python3\nimport sys,json,os\nfrom pathlib import Path\na=sys.argv[1:]\nPath(os.environ["NICX_STATE"],"enrollment-request.json").write_text(Path(a[a.index("--data-binary")+1][1:]).read_text())\nopen(a[a.index("--output")+1],"w").write(json.dumps({"device_id":"11111111-1111-4111-8111-111111111111","token":"'+'c'*64+'"}))\nprint("201",end="")\n')
+    def rpc(self, method, payload):
         rpc=ROOT/'openwrt/nicx-telemetry/files/usr/libexec/rpcd/nicx.telemetry'
         shell=([os.environ['NICX_BUSYBOX'],'ash'] if os.environ.get('NICX_BUSYBOX') else ['bash','--posix'])
-        payload={'endpoint':'https://fixture.workers.dev','enrollment_token':'e'*64,'name':'Fixture'}
-        result=subprocess.run(shell+[str(rpc),'call','enroll'],input=json.dumps(payload)+'\n',env=self.env,text=True,capture_output=True)
+        result=subprocess.run(shell+[str(rpc),'call',method],input=json.dumps(payload)+'\n',
+                              env=self.env,text=True,capture_output=True,timeout=15)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertTrue(json.loads(result.stdout)['ok'],result.stdout)
-        self.assertEqual((config/'token').read_text().strip(),'c'*64)
+        return json.loads(result.stdout)
+
+    def setup_enrollment(self):
+        config=self.state/'config'
+        config.mkdir()
+        self.env['NICX_CONFIG_DIR']=str(config)
+        self.env['NICX_SERVICE_SCRIPT']=str(self.bin/'telemetry-service')
+        self.write_tool('uci', """#!/usr/bin/env python3
+import json,os,sys
+from pathlib import Path
+root=Path(os.environ['NICX_STATE']);args=sys.argv[1:];fault=os.environ.get('NICX_UCI_FAULT')
+config=root/'uci.json'
+settings=json.loads(config.read_text())
+if args[0]=='-q':
+    value=settings.get(args[2].rsplit('.',1)[1])
+    if value is None:sys.exit(1)
+    print(value)
+    sys.exit()
+delta=Path(args[1])/'settings.json'
+staged=json.loads(delta.read_text()) if delta.exists() else {}
+if args[2]=='set':
+    key,value=args[3].split('=',1);key=key.rsplit('.',1)[1]
+    if fault==key:sys.exit(1)
+    staged[key]=value;delta.write_text(json.dumps(staged))
+elif args[2]=='commit':
+    if fault=='commit':sys.exit(1)
+    settings.update(staged);config.write_text(json.dumps(settings))
+else:sys.exit(1)
+""")
+        self.write_tool('telemetry-service', """#!/bin/sh
+set -e
+printf '%s\n' "$1" >> "$NICX_STATE/service-calls"
+case "$1" in
+    stop)
+        read -r old_token < "$NICX_CONFIG_DIR/token"
+        printf '%s\n' "$old_token" > "$NICX_STATE/token-at-stop"
+        [ "${NICX_STOP_FAULT:-0}" = 0 ] || exit 1
+        kill -TERM "$(cat "$NICX_STATE/fake-agent-pid")";;
+    start)
+        read -r new_token < "$NICX_CONFIG_DIR/token"
+        printf '%s\n' "$new_token" > "$NICX_STATE/token-at-start";;
+esac
+""")
+        self.write_tool('curl', """#!/usr/bin/env python3
+import sys,json,os
+from pathlib import Path
+args=sys.argv[1:]
+root=Path(os.environ['NICX_STATE'])
+(root/'enrollment-request.json').write_text(Path(args[args.index('--data-binary')+1][1:]).read_text())
+Path(args[args.index('--output')+1]).write_text(json.dumps({
+    'device_id':'11111111-1111-4111-8111-111111111111','token':'c'*64
+}))
+print('201',end='')
+""")
+        prior={'endpoint':'https://old.workers.dev','device_id':'22222222-2222-4222-8222-222222222222','enabled':'1'}
+        (self.state/'uci.json').write_text(json.dumps(prior))
+        with (config/'token').open('w') as token_file:
+            token_file.write('a'*64+'\n')
+        (config/'token').chmod(0o600)
+        return config,prior,{'endpoint':'https://fixture.workers.dev','enrollment_token':'e'*64,'name':'Fixture'}
+
+    def fake_agent(self):
+        process=subprocess.Popen(['sh','-c',r'''exec 9>> "$NICX_STATE/agent.lock"
+flock -n 9 || exit 1
+echo $$ > "$NICX_STATE/fake-agent-pid"
+exec sleep 60
+'''],env=self.env)
+        def cleanup():
+            if process.poll() is None:process.terminate()
+            process.wait(timeout=5)
+        self.addCleanup(cleanup)
+        deadline=time.monotonic()+5
+        while not (self.state/'fake-agent-pid').exists() and time.monotonic()<deadline:
+            time.sleep(.01)
+        self.assertIsNone(process.poll())
+        self.assertTrue((self.state/'fake-agent-pid').exists())
+        return process
+
+    def test_rpc_enroll_accepts_created_and_private_credential_rotation(self):
+        config,prior,payload=self.setup_enrollment()
+        agent=self.fake_agent()
+        result=self.rpc('enroll',payload)
+        self.assertTrue(result['ok'],result)
+        self.assertTrue(result['restarted'],result)
+        self.assertEqual((config/'token').read_text().splitlines(),['c'*64,payload['endpoint'],result['device_id']])
         self.assertEqual(json.loads((self.state/'enrollment-request.json').read_text())['model'],'Fixture router')
         self.assertEqual((config/'token').stat().st_mode & 0o777,0o600)
-        if os.environ.get('NICX_BUSYBOX'):
-            # Standalone ash can prefer its timeout applet over the PATH fixture.
-            # The host has no router init script, so the attempted restart is explicit.
-            response=json.loads(result.stdout)
-            self.assertTrue(response['restarted'] or response['restart_required'])
-        else:
-            self.assertTrue((self.state/'restarted').exists())
-            self.assertTrue(json.loads(result.stdout)['restarted'])
-        rotated=subprocess.run(shell+[str(rpc),'call','set_token'],input=json.dumps({'token':'d'*64})+'\n',env=self.env,text=True,capture_output=True)
-        self.assertTrue(json.loads(rotated.stdout)['ok'])
-        self.assertEqual((config/'token').read_text().strip(),'d'*64)
-        self.assertNotIn('d'*64,rotated.stdout)
+        self.assertEqual((self.state/'service-calls').read_text().splitlines(),['stop','start'])
+        self.assertEqual((self.state/'token-at-stop').read_text().strip(),'a'*64)
+        self.assertEqual((self.state/'token-at-start').read_text().strip(),'c'*64)
+        self.assertEqual(agent.wait(timeout=5),-15)
+        rotated=self.rpc('set_token',{'token':'d'*64})
+        self.assertTrue(rotated['ok'],rotated)
+        self.assertEqual((config/'token').read_text().splitlines(),['d'*64,payload['endpoint'],result['device_id']])
+        self.assertNotIn('d'*64,str(rotated))
+
+    def test_rpc_enroll_restores_old_enrollment_after_local_failure(self):
+        config,prior,payload=self.setup_enrollment()
+        for error in ('device_id','commit'):
+            with self.subTest(error=error):
+                self.env['NICX_UCI_FAULT']=error
+                result=self.rpc('enroll',payload)
+                self.assertEqual(result,{'ok':False,'error':'enrollment_config_write_failed'})
+                self.assertEqual((config/'token').read_text().strip(),'a'*64)
+                self.assertEqual(json.loads((self.state/'uci.json').read_text()),prior)
+                self.assertEqual(list(config.glob('token.*')),[])
+
+    def test_rpc_enroll_cannot_replace_credential_if_service_refuses_to_stop(self):
+        config,prior,payload=self.setup_enrollment()
+        self.env['NICX_STOP_FAULT']='1'
+        agent=self.fake_agent()
+        result=self.rpc('enroll',payload)
+        self.assertEqual(result,{'ok':False,'error':'enrollment_stop_failed'})
+        self.assertEqual((config/'token').read_text().strip(),'a'*64)
+        self.assertEqual(json.loads((self.state/'uci.json').read_text()),prior)
+        self.assertIsNone(agent.poll())
+
+    def test_rpc_rotation_reports_failed_replacement_and_cleans_temp(self):
+        config,_,_=self.setup_enrollment()
+        credential=config/'token';credential.rename(config/'saved')
+        credential.mkdir()
+        result=self.rpc('set_token',{'token':'d'*64})
+        self.assertEqual(result,{'ok':False,'error':'credential_write_failed'})
+        self.assertTrue(credential.is_dir())
+        self.assertEqual(list(config.glob('token.*')),[])
+
+    def test_bound_credential_rejects_wrong_origin_or_device(self):
+        config,prior,payload=self.setup_enrollment()
+        self.assertTrue(self.rpc('enroll',payload)['ok'])
+        self.shell('''load_config
+make_curl_config "$STATE/auth" || exit 51
+rm -f "$STATE/auth"
+enrolled_endpoint=$endpoint
+endpoint=https://old.workers.dev
+if make_curl_config "$STATE/auth";then exit 52;fi
+endpoint=$enrolled_endpoint;device_id=22222222-2222-4222-8222-222222222222
+if make_curl_config "$STATE/auth";then exit 53;fi
+test ! -e "$STATE/auth"
+''')
+
+    def test_agent_refuses_second_owner_before_first_publishes_pid(self):
+        agent=self.fake_agent()
+        (self.state/'lock').mkdir()
+        self.shell('''if (main);then exit 54;fi
+test -d "$STATE/lock" && test ! -e "$STATE/lock/pid"
+''')
+        agent.terminate()
+        agent.wait(timeout=5)
+        self.shell('''if (main);then exit 55;fi
+test ! -e "$STATE/lock"
+''')
 
     def test_firewall_policy_presence_is_distinct_from_daemon_running(self):
         self.write_tool('nft','#!/bin/sh\nprintf \'%s\\n\' "$*" > "$NICX_STATE/nft.args"\nexit 0\n')
@@ -235,6 +409,25 @@ print('200',end='')
         detail=json.loads(self.shell('collect_detail;cat "$STATE/detail.json"'))
         self.assertIn('firewall',detail['services'])
         self.assertIsNone(detail['services']['firewall'])
+
+    def test_service_status_distinguishes_confirmed_states_from_failed_check(self):
+        self.write_tool('ubus', """#!/bin/sh
+case "$NICX_SERVICE_STATUS" in
+    failed) printf '{}\n';exit 1;;
+    missing) printf '{}\n';;
+    *) printf '{"dnsmasq":{"instances":{"main":{"running":%s}}}}\n' "$NICX_SERVICE_STATUS";;
+esac
+""")
+        self.write_tool('jsonfilter', """#!/usr/bin/env python3
+import json,sys
+status=json.load(sys.stdin)['dnsmasq']['instances']['main']['running']
+print('true' if status else 'false')
+""")
+        for case,expected in (('true','true'),('false','false'),('missing','false'),('failed','unknown')):
+            with self.subTest(case=case):
+                self.env['NICX_SERVICE_STATUS']=case
+                output=self.shell('procd_service_status dnsmasq || echo unknown')
+                self.assertEqual(output.strip(),expected)
 
     def test_adblock_status_uses_allowlisted_procd_state(self):
         for status,expected in [('statusSuccess',True),('statusStopped',False),('statusFail',False),('statusDownloading',None),('unknown-new-version',None)]:
@@ -380,7 +573,7 @@ collect_network
         (self.state/'status.json').write_text('{"cloud_diagnostics_enabled":true}')
         rpc=ROOT/'openwrt/nicx-telemetry/files/usr/libexec/rpcd/nicx.telemetry'
         shell=([os.environ['NICX_BUSYBOX'],'ash'] if os.environ.get('NICX_BUSYBOX') else ['bash','--posix'])
-        for cache in ('', '{"interfaces":['):
+        for cache in ('', 'null', '[]', '{"interfaces":['):
             with self.subTest(cache=cache):
                 (self.state/'network.json').write_text(cache)
                 result=subprocess.run(shell+[str(rpc),'call','snapshot'],input='{"kind":"network"}\n',env=self.env,text=True,capture_output=True,timeout=5)

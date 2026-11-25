@@ -24,10 +24,19 @@ def analyze(path):
             'agent_rss_kb_max':max(int(r['agent_rss_kb']) for r in rows),
             'queue_disk_kb_max':max(int(r['queue_disk_kb']) for r in rows),'uplinks':{}}
     for role in ('wan','usbwan'):
-        if first[role+'_device'] and first[role+'_device']==last[role+'_device']:
-            rx=int(last[role+'_rx_bytes'])-int(first[role+'_rx_bytes']);tx=int(last[role+'_tx_bytes'])-int(first[role+'_tx_bytes'])
-            if rx>=0 and tx>=0:
-                result['uplinks'][role]={'device':first[role+'_device'],'rx_bytes_delta':rx,'tx_bytes_delta':tx,'includes_other_traffic':True}
+        device=first[role+'_device']
+        if not device or any(row[role+'_device']!=device for row in rows):
+            continue
+        try:
+            counters=[(int(row[role+'_rx_bytes']),int(row[role+'_tx_bytes'])) for row in rows]
+        except (ValueError,TypeError):
+            continue
+        if any(rx<0 or tx<0 for rx,tx in counters) or any(
+            next_rx<rx or next_tx<tx for (rx,tx),(next_rx,next_tx) in zip(counters,counters[1:])
+        ):
+            continue
+        rx=counters[-1][0]-counters[0][0];tx=counters[-1][1]-counters[0][1]
+        result['uplinks'][role]={'device':device,'rx_bytes_delta':rx,'tx_bytes_delta':tx,'includes_other_traffic':True}
     return result
 
 if __name__=='__main__':
