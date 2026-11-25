@@ -17,6 +17,18 @@ describe('stable bounded pagination',()=>{
  it('keeps the diagnostic page during live refresh and releases bounds on return',async()=>{const view=render(<Diagnostics/>);await waitFor(()=>expect(screen.getByRole('button',{name:'Next'})).not.toBeDisabled());fireEvent.click(screen.getByRole('button',{name:'Next'}));await waitFor(()=>expect(screen.getByText(/Page 2/)).toBeTruthy());advanceLiveRange();view.rerender(<Diagnostics/>);await waitFor(()=>expect(screen.getByText(/Page 2/)).toBeTruthy());expect(fixture.queries).not.toHaveBeenCalledWith('diagnostics','gte','created_at','2026-11-24T20:00:30Z');fireEvent.click(screen.getByRole('button',{name:'Previous'}));await waitFor(()=>expect(screen.getByText(/Page 1/)).toBeTruthy());expect(fixture.queries).toHaveBeenCalledWith('diagnostics','gte','created_at','2026-11-24T20:00:30Z');});
 });
 
+it('keeps opened diagnostic accordions expanded when live polling refreshes rows', async () => {
+  const view = render(<Diagnostics />);
+  await waitFor(() => expect(screen.getAllByText(/Received in cloud/).length).toBeGreaterThan(0));
+  const firstDetails = document.querySelector('details.record') as HTMLDetailsElement;
+  fireEvent.click(firstDetails.querySelector('summary')!);
+  expect(firstDetails.open).toBe(true);
+  fixture.monitor = { ...fixture.monitor, tick: 1, range: { ...initialRange, from: '2026-11-24T20:00:30Z', to: '2026-11-25T02:00:30Z' } };
+  view.rerender(<Diagnostics />);
+  await waitFor(() => expect(screen.queryByText('Loading observations…')).toBeNull());
+  expect((document.querySelector('details.record') as HTMLDetailsElement).open).toBe(true);
+});
+
 for(const [name,Page] of [['logs',Logs],['diagnostics',Diagnostics]] as const){
  it(`blocks stale ${name} exports from the first commit of a window change`,async()=>{
   const commits:boolean[][]=[];

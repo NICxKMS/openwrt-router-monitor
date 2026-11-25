@@ -26,3 +26,17 @@ it('manual refresh awaits both core metrics and current-page reads',async()=>{re
 function AlertsProbe(){const s=useMonitor();return <div><span>Alerts {s.openAlerts.length}</span><span>Error {s.error||'none'}</span></div>;}
 
 it('filters unresolved alerts before limit and retains existing alerts when an alerts read fails',async()=>{let alertsResponse:{data:unknown[]|null;error:{message:string}|null}={data:[{id:'a-1',device_id:'device-a',rule_key:'cpu_pct',severity:'warning',message:'High CPU',opened_at:'2026-11-25T00:00:00Z',resolved_at:null,acknowledged_at:null}],error:null};const original=mock.from.getMockImplementation()!;mock.from.mockImplementation((name:string)=>{if(name!=='alerts')return original(name);const builder:Record<string,unknown>={then:(resolve:(v:unknown)=>unknown,reject:(e:unknown)=>unknown)=>Promise.resolve(alertsResponse).then(resolve,reject)};for(const method of ['select','eq','is','gte','lt','order','limit'])builder[method]=(...args:unknown[])=>{mock.queries(name,method,...args);return builder;};return builder;});const view=render(<MonitorProvider session={session}><Probe/><AlertsProbe/></MonitorProvider>);await waitFor(()=>expect(screen.getByText('Alerts 1')).toBeTruthy());expect(mock.queries).toHaveBeenCalledWith('alerts','is','resolved_at',null);expect(mock.queries).toHaveBeenCalledWith('alerts','limit',25);alertsResponse={data:null,error:{message:'Alerts table unavailable'}};act(()=>screen.getByText('Historical window').click());await waitFor(()=>expect(screen.getByText('Error Alerts table unavailable')).toBeTruthy());expect(screen.getByText('Alerts 1')).toBeTruthy();view.unmount();});
+
+it('keeps existing query data mounted during background refreshes without flashing loading',async()=>{
+  let generation=0;
+  function StaleWhileRevalidateProbe({tick}:{tick:number}){
+    const q=useQuery(()=>Promise.resolve({data:[{v:++generation}],error:null}),['scope-a'],[tick]);
+    return <div><span>{q.loading?'LOADING':`VALUE:${q.data?.[0]?.v}`}</span><span>{q.refreshing?'REFRESHING':'IDLE'}</span></div>;
+  }
+  const view=render(<StaleWhileRevalidateProbe tick={0}/>);
+  await waitFor(()=>expect(screen.getByText('VALUE:1')).toBeTruthy());
+  view.rerender(<StaleWhileRevalidateProbe tick={1}/>);
+  expect(screen.queryByText('LOADING')).toBeNull();
+  expect(screen.getByText('VALUE:1')).toBeTruthy();
+  await waitFor(()=>expect(screen.getByText('VALUE:2')).toBeTruthy());
+});

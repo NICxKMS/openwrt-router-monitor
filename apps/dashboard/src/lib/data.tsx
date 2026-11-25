@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useMemo, useR
 import type { Session } from '@supabase/supabase-js';
 import { db } from './client';
 import { actionError, withTimeout } from './async';
-import { nowRange, readPreference, writePreference, type AlertRecord, type Device, type Sample, type TimeRange } from './model';
+import { nowRange, readPreference, timeRangeKey, writePreference, type AlertRecord, type Device, type Sample, type TimeRange } from './model';
 
 interface Store {
   session: Session;
@@ -45,6 +45,16 @@ export const useMonitor = () => {
   return v;
 };
 
+function sameSnapshot(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 export function MonitorProvider({ session, children }: { session: Session; children: ReactNode }) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selected, setSelected] = useState(() => readPreference('device', ''));
@@ -73,6 +83,9 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
   const running = useRef(new Map<string, Promise<void>>());
   const waiters = useRef<{ resolve: () => void; reject: (error: Error) => void }[]>([]);
+  const loadedWindowRef = useRef('');
+  const lastManualEpochRef = useRef(0);
+  const loadedDevicesEpochRef = useRef(-1);
 
   const track = useCallback((id: string, promise: Promise<void>) => {
     running.current.set(id, promise);
@@ -96,9 +109,9 @@ export function MonitorProvider({ session, children }: { session: Session; child
 
   useEffect(() => writePreference('range', range), [range]);
   const activeRange = useMemo(() => (range.live ? nowRange(range.hours) : range), [range, tick]);
-  const rangeKey = range.live ? 'live:' + range.hours : range.from + ':' + range.to;
+  const rangeKey = timeRangeKey(range);
   const visible = useRef(document.visibilityState !== 'hidden');
-  const device = devices.find((d) => d.id === selected) || devices[0] || null;
+  const device = useMemo(() => devices.find((d) => d.id === selected) || devices[0] || null, [devices, selected]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -106,15 +119,27 @@ export function MonitorProvider({ session, children }: { session: Session; child
   }, [theme]);
 
   useEffect(() => {
+    const manualTriggered = manualEpoch !== lastManualEpochRef.current;
+    // When browsing a frozen historical window, skip background polling of device list after initial load.
+    if (!range.live && loadedDevicesEpochRef.current >= 0 && !manualTriggered) {
+      return;
+    }
     let active = true;
-    const work = withTimeout(db!.from('devices').select('*').order('created_at'))
+    const work = withTimeout(
+      db!
+        .from('devices')
+        .select('id,name,model,created_at,last_seen_at,last_boot_id,revoked_at,dropped_samples,dropped_logs,storage_degraded_at,config')
+        .order('created_at'),
+    )
       .then(({ data, error }) => {
         if (!active) return;
         if (error) {
           setDeviceError(error.message);
           throw new Error(error.message);
         }
-        setDevices((data as Device[]) || []);
+        loadedDevicesEpochRef.current = manualEpoch;
+        const nextDevices = (data as Device[]) || [];
+        setDevices((prev) => (sameSnapshot(prev, nextDevices) ? prev : nextDevices));
         setDeviceError('');
       })
       .catch((error) => {
@@ -129,28 +154,39 @@ export function MonitorProvider({ session, children }: { session: Session; child
     return () => {
       active = false;
     };
-  }, [session.user.id, tick, track]);
+  }, [session.user.id, tick, manualEpoch, range.live, track]);
 
+  // Coalesce polling fallback with Realtime/manual refreshes so they never double-fetch back to back.
   useEffect(() => {
     const change = () => {
       visible.current = document.visibilityState !== 'hidden';
       if (visible.current && !paused) refresh();
     };
     document.addEventListener('visibilitychange', change);
-    const timer = setInterval(() => {
-      if (!paused && visible.current) refresh();
-    }, refreshSeconds * 1000);
+    const timer =
+      !paused && visible.current
+        ? setTimeout(() => {
+            if (!paused && visible.current) refresh();
+          }, refreshSeconds * 1000)
+        : undefined;
     return () => {
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', change);
     };
-  }, [paused, refresh, refreshSeconds]);
+  }, [paused, refresh, refreshSeconds, tick]);
 
   useEffect(() => {
     if (!device) {
       setLatest(null);
       setHistory([]);
       setOpenAlerts([]);
+      loadedWindowRef.current = '';
+      return;
+    }
+    const windowKey = `${device.id}:${rangeKey}`;
+    const manualTriggered = manualEpoch !== lastManualEpochRef.current;
+    // Frozen historical ranges are immutable; skip automatic timer ticks once loaded unless user forces a refresh.
+    if (!range.live && loadedWindowRef.current === windowKey && !manualTriggered) {
       return;
     }
     let active = true;
@@ -175,7 +211,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
                   .maybeSingle(),
             db!
               .from('alerts')
-              .select('*')
+              .select('id,device_id,rule_key,severity,message,opened_at,resolved_at,acknowledged_at')
               .eq('device_id', device.id)
               .is('resolved_at', null)
               .order('opened_at', { ascending: false })
@@ -185,14 +221,20 @@ export function MonitorProvider({ session, children }: { session: Session; child
         const error = latestResult.error || historyResult.error || snapshotResult.error || alertsResult.error;
         if (error) throw new Error(error.message);
         if (!active) return;
+        loadedWindowRef.current = windowKey;
+        lastManualEpochRef.current = manualEpoch;
         setMetricError('');
         setLatestDevice(device.id);
-        setSnapshot(snapshotResult.data as Sample | null);
+        const nextSnapshot = snapshotResult.data as Sample | null;
+        setSnapshot((prev) => (sameSnapshot(prev, nextSnapshot) ? prev : nextSnapshot));
         setDataRange(rangeKey);
-        setLatest(latestResult.data as Sample | null);
-        setHistory((historyResult.data || []) as Sample[]);
+        const nextLatest = latestResult.data as Sample | null;
+        setLatest((prev) => (sameSnapshot(prev, nextLatest) ? prev : nextLatest));
+        const nextHistory = (historyResult.data || []) as Sample[];
+        setHistory((prev) => (sameSnapshot(prev, nextHistory) ? prev : nextHistory));
         const alertRows = Array.isArray(alertsResult.data) ? (alertsResult.data as AlertRecord[]) : [];
-        setOpenAlerts(alertRows.filter((a) => a && typeof a.id === 'string' && !a.resolved_at));
+        const nextAlerts = alertRows.filter((a) => a && typeof a.id === 'string' && !a.resolved_at);
+        setOpenAlerts((prev) => (sameSnapshot(prev, nextAlerts) ? prev : nextAlerts));
         setLastRefreshAt(new Date().toISOString());
       } catch (error) {
         if (active) setMetricError(actionError(error));
@@ -205,7 +247,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
     return () => {
       active = false;
     };
-  }, [device?.id, tick, range, track]);
+  }, [device?.id, tick, range, rangeKey, manualEpoch, track]);
 
   // Child query effects and the core effects above register their real promises before this effect.
   useEffect(() => {
@@ -250,41 +292,77 @@ export function MonitorProvider({ session, children }: { session: Session; child
     };
   }, [device?.id, paused, refresh, refreshSeconds]);
 
-  const value: Store = {
-    session,
-    devices,
-    device,
-    selectDevice: (id) => {
-      setSelected(id);
-      writePreference('device', id);
-    },
-    latest: latestDevice === device?.id ? (range.live ? latest : dataRange === rangeKey ? snapshot : null) : null,
-    history: latestDevice === device?.id && dataRange === rangeKey ? history : [],
-    openAlerts: latestDevice === device?.id ? openAlerts : [],
-    range: activeRange,
-    setRange,
-    paused,
-    setPaused,
-    refreshSeconds,
-    setRefreshSeconds: (n) => {
-      setRefreshState(n);
-      writePreference('refresh-seconds', n);
-    },
-    zone,
-    setZone: (z) => {
-      setZoneState(z);
-      writePreference('zone', z);
-    },
-    theme,
-    setTheme: setThemeState,
-    tick,
-    refresh,
-    manualRefresh,
-    lastRefreshAt,
-    error: deviceError || metricError,
-    transport: paused ? 'Paused' : transport,
-    loading,
-  };
+  const selectDevice = useCallback((id: string) => {
+    setSelected(id);
+    writePreference('device', id);
+  }, []);
+
+  const setRefreshSeconds = useCallback((n: number) => {
+    setRefreshState(n);
+    writePreference('refresh-seconds', n);
+  }, []);
+
+  const setZone = useCallback((z: string) => {
+    setZoneState(z);
+    writePreference('zone', z);
+  }, []);
+
+  const scopedLatest = latestDevice === device?.id ? (range.live ? latest : dataRange === rangeKey ? snapshot : null) : null;
+  const scopedHistory = latestDevice === device?.id && dataRange === rangeKey ? history : [];
+  const scopedAlerts = latestDevice === device?.id ? openAlerts : [];
+
+  const value: Store = useMemo(
+    () => ({
+      session,
+      devices,
+      device,
+      selectDevice,
+      latest: scopedLatest,
+      history: scopedHistory,
+      openAlerts: scopedAlerts,
+      range: activeRange,
+      setRange,
+      paused,
+      setPaused,
+      refreshSeconds,
+      setRefreshSeconds,
+      zone,
+      setZone,
+      theme,
+      setTheme: setThemeState,
+      tick,
+      refresh,
+      manualRefresh,
+      lastRefreshAt,
+      error: deviceError || metricError,
+      transport: paused ? 'Paused' : transport,
+      loading,
+    }),
+    [
+      session,
+      devices,
+      device,
+      selectDevice,
+      scopedLatest,
+      scopedHistory,
+      scopedAlerts,
+      activeRange,
+      paused,
+      refreshSeconds,
+      setRefreshSeconds,
+      zone,
+      setZone,
+      theme,
+      tick,
+      refresh,
+      manualRefresh,
+      lastRefreshAt,
+      deviceError,
+      metricError,
+      transport,
+      loading,
+    ],
+  );
 
   return (
     <QueryContext.Provider value={registry}>
@@ -292,43 +370,73 @@ export function MonitorProvider({ session, children }: { session: Session; child
     </QueryContext.Provider>
   );
 }
-export function useQuery<T>(query: () => PromiseLike<{ data: T | null; error: { message: string } | null }>, deps: unknown[]) {
-  const [result, setResult] = useState<{ data: T | null; inputs: unknown[] } | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+
+function sameDeps(a: unknown[], b: unknown[]): boolean {
+  return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+}
+
+export function useQuery<T>(
+  query: () => PromiseLike<{ data: T | null; error: { message: string } | null }>,
+  scopeDeps: unknown[],
+  refreshDeps: unknown[] = [],
+) {
+  const [result, setResult] = useState<{ data: T | null; scope: unknown[] } | null>(null);
+  const [errorState, setErrorState] = useState<{ message: string; scope: unknown[]; background: boolean } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const registry = useContext(QueryContext);
   const id = useId();
-  const inputs = [...deps, registry?.epoch];
+  const isCurrent = result !== null && sameDeps(scopeDeps, result.scope);
+  const matchingError = errorState && sameDeps(scopeDeps, errorState.scope) ? errorState : null;
+  const blockingError = matchingError && !matchingError.background ? matchingError.message : '';
+  const refreshError = matchingError && matchingError.background ? matchingError.message : '';
+  const scopeAtEffectRef = useRef(isCurrent);
+  scopeAtEffectRef.current = isCurrent;
+  const allDeps = [...scopeDeps, ...refreshDeps, registry?.epoch];
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const background = scopeAtEffectRef.current;
+    if (background) {
+      setRefreshing(true);
+    } else {
+      setRefreshing(false);
+    }
+    const scopeSnapshot = [...scopeDeps];
     const work = withTimeout(Promise.resolve().then(query))
       .then((response) => {
         if (response.error) throw new Error(response.error.message);
         if (active) {
-          setResult({ data: response.data, inputs });
-          setError('');
+          setResult((prev) =>
+            prev && sameDeps(prev.scope, scopeSnapshot) && sameSnapshot(prev.data, response.data)
+              ? prev
+              : { data: response.data, scope: scopeSnapshot },
+          );
+          setErrorState(null);
           setRefreshedAt(new Date().toISOString());
         }
       })
-      .catch((error) => {
-        if (active) setError(actionError(error));
-        throw error;
+      .catch((err) => {
+        if (active) setErrorState({ message: actionError(err), scope: scopeSnapshot, background });
+        throw err;
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setRefreshing(false);
       });
     registry?.track(id, work);
     void work.catch(() => {});
     return () => {
       active = false;
     };
-  }, inputs);
+  }, allDeps);
 
-  // A render can have new inputs before the effect marks its query as loading.
-  const isCurrent =
-    result !== null && result.inputs.length === inputs.length && inputs.every((input, index) => Object.is(input, result.inputs[index]));
-  return { data: result?.data ?? null, error, loading, refreshedAt, isCurrent };
+  return {
+    data: isCurrent ? (result?.data ?? null) : null,
+    error: blockingError,
+    refreshError,
+    loading: !isCurrent && !blockingError,
+    refreshing,
+    refreshedAt,
+    isCurrent,
+  };
 }

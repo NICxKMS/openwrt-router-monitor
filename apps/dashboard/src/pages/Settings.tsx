@@ -99,7 +99,7 @@ export function Enrollment() {
 }
 
 export function Settings() {
-  const { device, zone, setZone, theme, setTheme, refresh, tick, refreshSeconds, setRefreshSeconds } = useMonitor();
+  const { device, zone, setZone, theme, setTheme, refresh, refreshSeconds, setRefreshSeconds } = useMonitor();
   const deviceId = device!.id;
   const context = useRef({ deviceId, generation: 0 });
   const appliedConfig = useRef<Row>({});
@@ -112,6 +112,7 @@ export function Settings() {
   const [config, setConfig] = useState<Row>({});
   const [credential, setCredential] = useState<{ deviceId: string; token: string } | null>(null);
   const [confirmation, setConfirmation] = useState('');
+  const [clientRevision, setClientRevision] = useState(0);
 
   const token = credential?.deviceId === device!.id ? credential.token : '';
   const setToken = (value: string) => setCredential(value ? { deviceId: context.current.deviceId, token: value } : null);
@@ -130,8 +131,15 @@ export function Settings() {
   }, [device?.id]);
 
   const clients = useQuery(
-    () => db!.from('client_names').select('*').eq('device_id', device!.id).order('client_id').limit(200),
-    [device?.id, tick],
+    () =>
+      db!
+        .from('client_names')
+        .select('device_id,client_id,name')
+        .eq('device_id', device!.id)
+        .order('client_id')
+        .limit(200),
+    [device?.id],
+    [clientRevision],
   );
 
   const path = `/api/v1/devices/${device!.id}`;
@@ -318,6 +326,7 @@ export function Settings() {
           success="Client name saved."
           onSubmit={async (form, action, values) => {
             await mutate(`${path}/client-names/${encodeURIComponent(String(values.get('client')))}`, { name: values.get('name') }, 'PUT', action.signal);
+            setClientRevision((r) => r + 1);
             form.reset();
           }}
         >
@@ -349,9 +358,10 @@ export function Settings() {
                     className="inline-form"
                     pending="Saving this client name…"
                     success="Client name updated."
-                    onSubmit={(_form, action, values) =>
-                      mutate(`${path}/client-names/${encodeURIComponent(String(row.client_id))}`, { name: values.get('name') }, 'PUT', action.signal)
-                    }
+                    onSubmit={async (_form, action, values) => {
+                      await mutate(`${path}/client-names/${encodeURIComponent(String(row.client_id))}`, { name: values.get('name') }, 'PUT', action.signal);
+                      setClientRevision((r) => r + 1);
+                    }}
                   >
                     <Input name="name" defaultValue={String(v || '')} maxLength={80} required aria-label={`Name for ${row.client_id}`} />
                     <ActionSubmit pendingLabel="Saving…">Save</ActionSubmit>
