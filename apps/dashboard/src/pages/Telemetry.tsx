@@ -594,6 +594,26 @@ export function Memory() {
   );
 }
 
+async function readBillingCycleBytes(deviceId: string, cycleStart: string, asOfDay: string) {
+  const pageSize = 100;
+  let total = 0;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await db!
+      .from('bandwidth_daily')
+      .select('rx_bytes,tx_bytes')
+      .eq('device_id', deviceId)
+      .gte('day', cycleStart)
+      .lte('day', asOfDay)
+      .order('day')
+      .order('interface_name')
+      .order('role')
+      .range(offset, offset + pageSize - 1);
+    if (error) return { data: null, error };
+    for (const row of data) total += (num(row.rx_bytes) ?? 0) + (num(row.tx_bytes) ?? 0);
+    if (data.length < pageSize) return { data: total, error: null };
+  }
+}
+
 export function Network() {
   const { device, tick, range, latest } = useMonitor();
   const q = useQuery(
@@ -621,23 +641,18 @@ export function Network() {
   const now = new Date();
   const cycleStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCDate() >= billingDay ? now.getUTCMonth() : now.getUTCMonth() - 1, billingDay));
   const cycleStartStr = cycleStart.toISOString().slice(0, 10);
+  const asOfDay = now.toISOString().slice(0, 10);
 
   const cycleQuery = useQuery(
     () =>
-      quotaGb > 0
-        ? db!
-            .from('bandwidth_daily')
-            .select('rx_bytes,tx_bytes')
-            .eq('device_id', device!.id)
-            .gte('day', cycleStartStr)
-            .limit(35)
-        : Promise.resolve({ data: [], error: null }),
-    [device?.id, tick, quotaGb, cycleStartStr],
+      device && quotaGb > 0
+        ? readBillingCycleBytes(device.id, cycleStartStr, asOfDay)
+        : Promise.resolve({ data: null, error: null }),
+    [device?.id, tick, quotaGb, cycleStartStr, asOfDay],
   );
 
-  const cycleRows = (cycleQuery.data || []) as Row[];
-  const cycleReady = quotaGb > 0 && !cycleQuery.loading && !cycleQuery.error;
-  const cycleBytes = cycleReady ? cycleRows.reduce((sum, r) => sum + (num(r.rx_bytes) ?? 0) + (num(r.tx_bytes) ?? 0), 0) : null;
+  const cycleReady = cycleQuery.isCurrent && !cycleQuery.loading && !cycleQuery.error;
+  const cycleBytes = cycleReady ? cycleQuery.data : null;
   const quotaPct = quotaGb > 0 && cycleBytes !== null ? (cycleBytes / (quotaGb * 1e9)) * 100 : null;
 
   return (
@@ -670,6 +685,10 @@ export function Network() {
           title="Monthly internet quota"
           description={`Observed WAN traffic since UTC billing cycle start (${cycleStartStr}).`}
         >
+          <div className="tile-row-top" style={{ marginBottom: 10 }}>
+            <strong>{fmt(cycleBytes === null ? null : cycleBytes / 1e9, ' GB', 2)} used of {quotaGb} GB</strong>
+            <span className="small muted">Observed coverage only · not ISP billing meter</span>
+          </div>
           {cycleQuery.loading ? (
             <p className="small muted" role="status">
               Loading billing-cycle quota usage…
@@ -678,17 +697,9 @@ export function Network() {
             <p className="notice danger" role="alert">
               {cycleQuery.error}
             </p>
-          ) : (
-            <>
-              <div className="tile-row-top" style={{ marginBottom: 10 }}>
-                <strong>
-                  {cycleBytes !== null ? fmt(cycleBytes / 1e9, ' GB', 2) : '—'} used of {quotaGb} GB
-                </strong>
-                <span className="small muted">Observed coverage only · not ISP billing meter</span>
-              </div>
-              <ProgressBar percent={quotaPct} label="Monthly quota utilization" />
-            </>
-          )}
+          ) : cycleReady ? (
+            <ProgressBar percent={quotaPct} label="Monthly quota utilization" />
+          ) : null}
         </Card>
       )}
 
@@ -767,7 +778,10 @@ export function WiFi() {
   const fallbackStations = rows(detail.stations ?? detail.wifi_stations);
   const allStations = stationRows.length ? stationRows : fallbackStations;
 
-  const totalStations = radios.reduce((acc, r) => acc + (num(r.stations) ?? 0), 0);
+  const stationCounts = radios.map((radio) => num(radio.stations));
+  const totalStations = stationCounts.length && stationCounts.every((count): count is number => count !== null && Number.isSafeInteger(count) && count >= 0)
+    ? stationCounts.reduce((total, count) => total + count, 0)
+    : null;
   const signals = radios.map((r) => num(r.signal_avg_dbm)).filter((v): v is number => v !== null);
   const avgSignal = signals.length ? signals.reduce((a, b) => a + b, 0) / signals.length : null;
 
@@ -779,7 +793,11 @@ export function WiFi() {
 
       <div className="stats">
         <Stat label="Active radios" value={radios.length || '—'} sub={wifi.available === false ? 'iw unavailable' : 'Monitored wireless interfaces'} />
-        <Stat label="Associated stations" value={radios.length ? totalStations : '—'} sub="Total across radios" />
+        <Stat
+          label="Associated stations"
+          value={totalStations ?? '—'}
+          sub={totalStations === null ? 'Requires a count from every radio' : 'Total across radios'}
+        />
         <Stat label="Average signal" value={fmt(avgSignal, ' dBm', 0)} sub="Measured station mean" />
         <Stat label="Regulatory domain" value={typeof wifi.country === 'string' ? wifi.country : '—'} sub="Reported by iw reg get" />
       </div>
