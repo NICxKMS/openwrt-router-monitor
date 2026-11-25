@@ -38,7 +38,7 @@ test('real pending and completed feedback remains visible on screen',async({page
  });
  if(info.project.name==='mobile')await page.getByRole('button',{name:'Open navigation'}).click();
  await page.getByRole('link',{name:'Settings',exact:true}).click();
- await page.getByLabel('Friendly name',{exact:true}).fill('RENAMED SYNTHETIC FIXTURE');await page.getByRole('button',{name:'Save router name'}).click();
+ await page.getByLabel('Friendly name',{exact:true}).first().fill('RENAMED SYNTHETIC FIXTURE');await page.getByRole('button',{name:'Save router name'}).click();
  const pending=page.getByRole('button',{name:'Saving name…'});await expect(pending).toBeDisabled();await pending.dispatchEvent('click');await expect.poll(()=>writes).toBe(1);
  let panel=await visibleActivity(page);await expect(panel.getByText('Saving the router name…',{exact:true})).toBeVisible();
  release();await expect(panel.getByText('Router name saved in the cloud.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Save router name'})).toBeEnabled();
