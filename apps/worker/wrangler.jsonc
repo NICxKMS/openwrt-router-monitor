@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nicx-router-monitor",
+  "account_id": "02d66297ae254b05f52ec3795c717da9",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-25",
+  "workers_dev": true,
+  "routes": [{ "pattern": "router.nicx.me", "custom_domain": true }],
+  "assets": { "directory": "../dashboard/dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] },
+  "triggers": { "crons": ["* * * * *"] },
+  "ratelimits": [{ "name": "API_RATE_LIMITER", "namespace_id": "6111", "simple": { "limit": 120, "period": 60 } }],
+  "vars": { "APP_ORIGIN": "https://router.nicx.me", "SUPABASE_URL": "https://whpnjrdsksgmtzgvaepx.supabase.co" },
+  "observability": { "enabled": false }
+}

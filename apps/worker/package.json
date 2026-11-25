@@ -1,0 +1,22 @@
+{
+  "name": "@nicx/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "build": "node ../../scripts/worker-build.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@nicx/shared": "workspace:*",
+    "hono": "4.13.22",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261125.1",
+    "wrangler": "4.168.0",
+    "typescript": "5.9.3"
+  }
+}
