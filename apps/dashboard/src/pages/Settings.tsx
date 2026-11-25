@@ -116,8 +116,13 @@ export function Settings() {
   const setToken = (value: string) => setCredential(value ? { deviceId: context.current.deviceId, token: value } : null);
 
   useEffect(() => {
+    const savedConfig = { ...device?.config };
+    for (const [key, , , max] of configFields) {
+      const value = savedConfig[key];
+      if (typeof value === 'number' && value > max) savedConfig[key] = max;
+    }
     setName(device?.name || '');
-    setConfig({ ...device?.config });
+    setConfig(savedConfig);
     setToken('');
     setConfirmation('');
   }, [device?.id]);

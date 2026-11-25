@@ -5,7 +5,7 @@ const dashboardDirectory = fileURLToPath(new URL('.', import.meta.url));
 
 export function loadDashboardEnv(mode: string) {
   const env = loadEnv(mode, dashboardDirectory);
-  const key = env.VITE_SUPABASE_ANON_KEY ?? '';
+  const key = env.VITE_SUPABASE_ANON_KEY?.trim() ?? '';
   if (key.startsWith('sb_secret_')) {
     throw new Error('A secret Supabase key was assigned to a browser variable.');
   }
