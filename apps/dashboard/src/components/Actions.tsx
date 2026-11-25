@@ -41,7 +41,8 @@ export function useAction(key?:string) {
     finally{locked.current=false;}
   };
   const state=hub?.states[actionKey]||local;
-  return {run,state,pending:state?.status==='pending',global:!!hub};
+  const dismiss=useCallback(()=>{if(hub)hub.dismiss(actionKey);else setLocal(old=>old?.status==='pending'?old:null);},[hub,actionKey]);
+  return {run,state,pending:state?.status==='pending',global:!!hub,dismiss};
 }
 export type ActionController=ReturnType<typeof useAction>;
 function ActionIcon({state}:{state:ActionState}) {return state.status==='pending'?<Loader2 className="pending-spin" size={16}/>:state.status==='error'?<TriangleAlert size={16}/>:<CheckCircle2 size={16}/>;}
@@ -53,8 +54,9 @@ export function ActionButton({onAction,pendingLabel='Working…',successMessage,
   return <span className="action-control"><Button {...props} variant={variant} disabled={disabled||action.pending} aria-busy={action.pending} onClick={()=>void action.run({pending:pendingLabel,success:successMessage},onAction)}>{action.pending?<><Loader2 size={14} className="pending-spin"/>{pendingLabel}</>:children}</Button><ActionStatus action={action} compact/></span>;
 }
 const FormContext=createContext<ActionController|null>(null);
-export function ActionForm({children,onSubmit,pending,success,className,actionKey}:{children:ReactNode;onSubmit:(form:HTMLFormElement,context:ActionContext,values:FormData)=>PromiseLike<unknown>|unknown;pending:string;success:string;className?:string;actionKey?:string}) {
+export function ActionForm({children,onSubmit,pending,success,className,actionKey,onDismissRef}:{children:ReactNode;onSubmit:(form:HTMLFormElement,context:ActionContext,values:FormData)=>PromiseLike<unknown>|unknown;pending:string;success:string;className?:string;actionKey?:string;onDismissRef?:React.MutableRefObject<(()=>void)|null>}) {
   const action=useAction(actionKey);
+  if(onDismissRef)onDismissRef.current=action.dismiss;
   const submit=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=event.currentTarget;const values=new FormData(form);void action.run({pending,success},context=>onSubmit(form,context,values));};
   return <FormContext.Provider value={action}><form className={className} onSubmit={submit} aria-busy={action.pending}><fieldset disabled={action.pending} className="action-fieldset">{children}</fieldset><ActionStatus action={action}/></form></FormContext.Provider>;
 }
