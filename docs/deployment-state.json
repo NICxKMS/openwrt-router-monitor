@@ -1,0 +1,49 @@
+{
+  "updated": "2026-11-25",
+  "dashboard_url": "https://router.nicx.me",
+  "worker": "nicx-router-monitor",
+  "cloudflare_account_id": "02d66297ae254b05f52ec3795c717da9",
+  "supabase_project_ref": "whpnjrdsksgmtzgvaepx",
+  "supabase_region": "ap-south-1",
+  "supabase_plan": "free",
+  "applied_migrations": [
+    "nicx_monitor_core",
+    "nicx_monitor_storage",
+    "nicx_monitor_cron",
+    "nicx_monitor_advisor_indexes",
+    "nicx_monitor_archive_replacement",
+    "nicx_monitor_diagnostic_receipts"
+  ],
+  "backend_key_type": "modern opaque secret in Worker secret storage",
+  "verified": [
+    "HTTPS dashboard",
+    "CSP and security headers",
+    "Worker-to-database invalid-credential rejection",
+    "anonymous telemetry denial",
+    "RLS enabled",
+    "private archive bucket",
+    "latest-only Realtime publication",
+    "successful hosted pg_cron maintenance",
+    "signed APK builds",
+    "owner Auth user created",
+    "public signup disabled",
+    "real deployed login rendered without JavaScript errors",
+    "user confirmed both router packages installed",
+    "owner signed into dashboard",
+    "actual JIDU6111 enrollment and first real telemetry",
+    "user confirmed local connection test and dashboard observations",
+    "release 2 signed APK upgrade preserved config and credentials",
+    "real snapshot UUID matched explicit stored cloud receipt",
+    "desktop/mobile action progress and failure browser checks"
+  ],
+  "pending": [
+    "live Realtime delivery",
+    "physical router resource benchmarks",
+    "long-term quota observation"
+  ],
+  "worker_version": "3f182dbb-acc0-4883-9a6d-aee26cc60e80",
+  "openwrt_package_release": "1.0.0-r2",
+  "deferred_by_owner": [
+    "Telegram setup and notification recipient verification"
+  ]
+}
