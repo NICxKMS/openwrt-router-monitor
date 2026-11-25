@@ -18,5 +18,30 @@ describe('stable bounded pagination',()=>{
 });
 
 for(const [name,Page] of [['logs',Logs],['diagnostics',Diagnostics]] as const){
- it(`blocks stale ${name} exports while a new window is loading or failed`,async()=>{const view=render(<Page/>);await waitFor(()=>expect(screen.getByRole('button',{name:'CSV'})).not.toBeDisabled());let resolve!:(value:{data:null;error:{message:string}})=>void;fixture.response=new Promise(yes=>{resolve=yes;});fixture.monitor={...fixture.monitor,range:{...initialRange,live:false,from:'2026-11-23T00:00:00Z',to:'2026-11-24T00:00:00Z'}};view.rerender(<Page/>);await waitFor(()=>expect(screen.getByText('Loading observations…')).toBeTruthy());expect(screen.getByRole('button',{name:'CSV'})).toBeDisabled();expect(screen.getByRole('button',{name:'JSON'})).toBeDisabled();resolve({data:null,error:{message:'Current window could not be loaded'}});await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('Current window could not be loaded'));expect(screen.getByRole('button',{name:'CSV'})).toBeDisabled();expect(screen.getByRole('button',{name:'JSON'})).toBeDisabled();});
+ it(`blocks stale ${name} exports from the first commit of a window change`,async()=>{
+  const commits:boolean[][]=[];
+  const exportButtons=()=>['CSV','JSON'].map(format=>screen.getByRole<HTMLButtonElement>('button',{name:format}));
+  const page=()=> <React.Profiler id={name} onRender={()=>commits.push(exportButtons().map(button=>button.disabled))}><Page/></React.Profiler>;
+  const view=render(page());
+  await waitFor(()=>expect(exportButtons()[0]).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button',{name:name==='logs'?'Next 50':'Next'}));
+  await waitFor(()=>{expect(screen.getByText(/Page 2/)).toBeTruthy();expect(exportButtons()[0]).not.toBeDisabled();});
+  let resolve!:(value:{data:null;error:{message:string}})=>void;
+  fixture.response=new Promise(yes=>{resolve=yes;});
+  fixture.monitor={...fixture.monitor,range:{...initialRange,live:false,from:'2026-11-23T00:00:00Z',to:'2026-11-24T00:00:00Z'}};
+  commits.length=0;
+  view.rerender(page());
+  expect(commits[0]).toEqual([true,true]);
+  await waitFor(()=>expect(screen.getByText('Loading observations…')).toBeTruthy());
+  expect(exportButtons().every(button=>button.disabled)).toBe(true);
+  resolve({data:null,error:{message:'Current window could not be loaded'}});
+  await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('Current window could not be loaded'));
+  expect(exportButtons().every(button=>button.disabled)).toBe(true);
+  fixture.response=null;
+  fixture.monitor={...fixture.monitor,device:{id:'device-b'}};
+  commits.length=0;
+  view.rerender(page());
+  expect(commits[0]).toEqual([true,true]);
+  await waitFor(()=>expect(exportButtons().every(button=>!button.disabled)).toBe(true));
+ });
 }

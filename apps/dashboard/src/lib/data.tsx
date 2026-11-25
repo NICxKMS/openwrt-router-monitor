@@ -64,13 +64,16 @@ export function MonitorProvider({session,children}:{session:Session;children:Rea
  return <QueryContext.Provider value={registry}><Context.Provider value={value}>{children}</Context.Provider></QueryContext.Provider>;
 }
 export function useQuery<T>(query:()=>PromiseLike<{data:T|null;error:{message:string}|null}>,deps:unknown[]) {
- const [data,setData]=useState<T|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[refreshedAt,setRefreshedAt]=useState<string|null>(null);
+ const [result,setResult]=useState<{data:T|null;inputs:unknown[]}|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[refreshedAt,setRefreshedAt]=useState<string|null>(null);
  const registry=useContext(QueryContext);const id=useId();
+ const inputs=[...deps,registry?.epoch];
  useEffect(()=>{
   let active=true;setLoading(true);
-  const work=withTimeout(Promise.resolve().then(query)).then(result=>{if(result.error)throw new Error(result.error.message);if(active){setData(result.data);setError('');setRefreshedAt(new Date().toISOString());}}).catch(error=>{if(active)setError(actionError(error));throw error;}).finally(()=>{if(active)setLoading(false);});
+  const work=withTimeout(Promise.resolve().then(query)).then(response=>{if(response.error)throw new Error(response.error.message);if(active){setResult({data:response.data,inputs});setError('');setRefreshedAt(new Date().toISOString());}}).catch(error=>{if(active)setError(actionError(error));throw error;}).finally(()=>{if(active)setLoading(false);});
   registry?.track(id,work);void work.catch(()=>{});
   return()=>{active=false;};
- },[...deps,registry?.epoch]);
- return {data,error,loading,refreshedAt};
+ },inputs);
+ // A render can have new inputs before the effect marks its query as loading.
+ const isCurrent=result!==null&&result.inputs.length===inputs.length&&inputs.every((input,index)=>Object.is(input,result.inputs[index]));
+ return {data:result?.data??null,error,loading,refreshedAt,isCurrent};
 }
