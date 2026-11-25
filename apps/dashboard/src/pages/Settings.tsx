@@ -118,7 +118,7 @@ export function Settings() {
 
   useEffect(() => {
     const savedConfig = { ...device?.config };
-    for (const [key, , , max] of configFields) {
+    for (const [key, , , max] of [...cadenceFields, ...retentionFields]) {
       const value = savedConfig[key];
       if (typeof value === 'number' && value > max) savedConfig[key] = max;
     }
