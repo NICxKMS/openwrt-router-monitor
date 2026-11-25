@@ -1,13 +1,20 @@
 import { Database, type Env, type Fetcher } from './db';
+import { ApiError } from './security';
 import { redact } from '@nicx/shared';
 
-interface Notification {id:string;device_id:string;owner_id:string;message:string;severity:string;event:string}
+interface Notification {id:string;attempts:number;device_id:string;owner_id:string;message:string;severity:string;event:string}
 export async function runScheduled(env:Env,fetcher:Fetcher=fetch):Promise<void>{
   const db=new Database(env,fetcher);
   await db.rpc('maintenance');
   // Do not lease messages when no delivery destination is configured.
   if(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID && env.TELEGRAM_OWNER_ID){
-    const rows=await db.rpc<Notification[]>('claim_notifications',{p_limit:3});
+    let rows:Notification[]=[];
+    try{
+      rows=await db.rpc<Notification[]>('claim_notification_attempts',{p_limit:3});
+    }catch(error){
+      // Older database migrations cannot safely acknowledge individual attempts.
+      if(!(error instanceof ApiError)||error.code!=='backend_rpc_unavailable')throw error;
+    }
     for(const row of rows){
       let ok=false,error='notification_destination_not_configured_for_owner';
       if(row.owner_id===env.TELEGRAM_OWNER_ID){
@@ -16,7 +23,7 @@ export async function runScheduled(env:Env,fetcher:Fetcher=fetch):Promise<void>{
           const body=await r.json() as {ok?:boolean};ok=r.ok&&body.ok===true;error=ok?'':'provider_rejected';
         }catch{error='provider_unavailable';}
       }
-      await db.rpc('finish_notification',{p_id:row.id,p_ok:ok,p_error:ok?null:error});
+      await db.rpc('finish_notification',{p_id:row.id,p_attempt:row.attempts,p_ok:ok,p_error:ok?null:error});
     }
   }
   const deletions=await db.rpc<{id:string;object_path:string}[]>('claim_storage_deletions',{p_limit:3});

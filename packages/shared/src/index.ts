@@ -9,12 +9,24 @@ export function jsonStorageBytes(value:unknown):number {
     if(depth>16){tooDeep=true;return;}
     if(Array.isArray(v)){extra+=Math.max(0,v.length-1);v.forEach(x=>visit(x,depth+1));}
     else if(v && typeof v==='object'){const entries=Object.entries(v);extra+=entries.length+Math.max(0,entries.length-1);entries.forEach(([,x])=>visit(x,depth+1));}
-    else if(typeof v==='number'&&String(v).includes('e'))extra+=24; // conservative exponent normalization budget
+    else if(typeof v==='number'){
+      const encoded=String(v);
+      const [mantissa,exponent]=encoded.split('e');
+      if(exponent===undefined)return;
+      const negative=mantissa.startsWith('-');
+      const [whole,fraction='']=(negative?mantissa.slice(1):mantissa).split('.');
+      const digits=whole.length+fraction.length;
+      const position=whole.length+Number(exponent);
+      // JSONB expands scientific notation into ordinary decimal digits.
+      const expanded=position<=0?2-position+digits:Math.max(position,digits)+Number(position<digits);
+      extra+=expanded+Number(negative)-encoded.length;
+    }
   };
   visit(value);if(tooDeep)return Infinity;return new TextEncoder().encode(JSON.stringify(value)).byteLength+extra;
 }
 const safeInt = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const gauge = z.number().finite().nonnegative().nullable();
+const duration = z.number().finite().positive().nullable();
 const timestamp = z.iso.datetime({ offset: true }).nullable();
 const uuid = z.uuid();
 export const jsonObject = z.record(z.string().max(128), z.unknown()).superRefine((value, ctx) => {
@@ -30,11 +42,13 @@ export const jsonObject = z.record(z.string().max(128), z.unknown()).superRefine
   if (!check(value,0)) ctx.addIssue({code:'custom',message:'Invalid diagnostic structure'});
 });
 
+const wifiIntervalMax=900;
+const processIntervalMax=1800;
 export const configSchema = z.object({
   sample_interval:z.number().int().min(5).max(300).optional(),
   upload_interval:z.number().int().min(15).max(900).optional(),
-  wifi_interval:z.number().int().min(15).max(1800).optional(),
-  process_interval:z.number().int().min(30).max(3600).optional(),
+  wifi_interval:z.number().int().min(15).max(wifiIntervalMax).optional(),
+  process_interval:z.number().int().min(30).max(processIntervalMax).optional(),
   detail_interval:z.number().int().min(60).max(3600).optional(),
   buffer_kb:z.number().int().min(1024).max(4096).optional(),
   logs_enabled:z.boolean().optional(),
@@ -46,13 +60,18 @@ export const configSchema = z.object({
   monthly_quota_gb:z.number().min(0).max(100000).optional(),
   billing_day:z.number().int().min(1).max(28).optional(),
 }).strict();
+// Existing devices may have saved an interval from the earlier wider API range.
+export const storedConfigSchema=configSchema.extend({
+  wifi_interval:z.number().int().min(15).max(1800).transform(value=>Math.min(value,wifiIntervalMax)).optional(),
+  process_interval:z.number().int().min(30).max(3600).transform(value=>Math.min(value,processIntervalMax)).optional(),
+});
 export const defaultConfig = Object.freeze({sample_interval:10,upload_interval:30,wifi_interval:30,process_interval:60,detail_interval:300,buffer_kb:2048,logs_enabled:true,log_severity:5,privacy_addresses:false,diagnostics_enabled:false,retention_raw_days:3,retention_logs_days:7,monthly_quota_gb:0,billing_day:1});
 export type DeviceConfig = z.infer<typeof configSchema>;
 
 export const interfaceSchema = z.object({
   name:z.string().regex(/^[a-zA-Z0-9_.:@-]{1,32}$/),role:z.enum(['wan','usbwan','lan','other']),
   rx_bytes:z.string().regex(/^\d{1,20}$/),tx_bytes:z.string().regex(/^\d{1,20}$/),
-  rx_delta:safeInt.nullable(),tx_delta:safeInt.nullable(),elapsed_s:gauge,reset:z.boolean(),
+  rx_delta:safeInt.nullable(),tx_delta:safeInt.nullable(),elapsed_s:duration,reset:z.boolean(),
 }).strict();
 export const sampleSchema = z.object({
   seq:safeInt,uptime_s:z.number().finite().nonnegative().max(1e10),observed_at:timestamp,
@@ -60,7 +79,7 @@ export const sampleSchema = z.object({
   mem_total_kb:safeInt.nullable(),mem_available_kb:safeInt.nullable(),
   mem_free_kb:safeInt.optional(),cached_kb:safeInt.optional(),slab_kb:safeInt.optional(),sreclaimable_kb:safeInt.optional(),sunreclaim_kb:safeInt.optional(),
   temp_c:z.number().finite().min(-50).max(200).nullable(),
-  rx_bytes_delta:safeInt.nullable(),tx_bytes_delta:safeInt.nullable(),elapsed_s:gauge,
+  rx_bytes_delta:safeInt.nullable(),tx_bytes_delta:safeInt.nullable(),elapsed_s:duration,
   interfaces:z.array(interfaceSchema).max(32).optional(),detail:jsonObject.optional(),
 }).strict();
 export const logSchema = z.object({seq:safeInt,uptime_s:z.number().finite().nonnegative().max(1e10),observed_at:timestamp,severity:z.number().int().min(0).max(7),service:z.string().min(1).max(64),message:z.string().max(1024),count:z.number().int().min(1).max(100000),first_at:timestamp.optional(),last_at:timestamp.optional()}).strict();
@@ -84,8 +103,9 @@ export function counterDelta(current:string, previous:string, elapsed:number, re
 
 export function redact(input:string, addresses=true):string {
   let text=input
+    .replace(/("(?:password|passwd|secret|token|api[_-]?key|private[_-]?key|preshared[_-]?key|authorization)"\s*:\s*)"(?:[^"\\\r\n]|\\[^\r\n])*"/gi,'$1"[redacted]"')
     .replace(/\b(?:authorization\s*:\s*)?(?:bearer|basic)\s+[^\s,;]+/gi,'[credential redacted]')
-    .replace(/\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|preshared[_-]?key)\s*[=:]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,'$1=[redacted]')
+    .replace(/\b(password|passwd|secret|token|api[_-]?key|private[_-]?key|preshared[_-]?key)\s*[=:]\s*(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*'|[^\s,;]+)/gi,'$1=[redacted]')
     .replace(/\b(?:nxd_|nxe_)[a-f0-9]{64}\b/gi,'[credential redacted]')
     .replace(/\bsb_secret_[A-Za-z0-9_-]+\b/g,'[credential redacted]')
     .replace(/https?:\/\/[^\s/@:]+:[^\s/@]+@/gi,'https://[redacted]@');

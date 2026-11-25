@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { batchSchema, configSchema, defaultConfig, jsonStorageBytes, MAX_BODY_BYTES, redact, sanitizeJson, SCHEMA_VERSION } from '@nicx/shared';
+import { batchSchema, configSchema, defaultConfig, jsonStorageBytes, MAX_BODY_BYTES, redact, sanitizeJson, SCHEMA_VERSION, storedConfigSchema } from '@nicx/shared';
 import { applySupabaseAuth, Database, type Env, type Fetcher } from './db';
 import { ApiError, bearer, deviceToken, issueToken, readJson, sha256 } from './security';
 
@@ -45,14 +45,14 @@ export function createApp(fetcher:Fetcher=fetch){
     const result=await new Database(c.env,fetcher).rpc<{accepted:boolean;duplicate:boolean;config:unknown;reason?:string;diagnostics_accepted?:boolean|null;diagnostics_reason?:string;diagnostics_request_id?:string|null}>('ingest_batch',{p_token_hash:await sha256(token),p_batch:body});
     if(typeof result?.accepted!=='boolean')throw new ApiError(503,'invalid_backend_response');
     if(!result.accepted)throw new ApiError(503,result.reason==='storage_budget'?'storage_budget_exceeded':'batch_not_accepted');
-    const config=configSchema.safeParse(result.config);
+    const config=storedConfigSchema.safeParse(result.config);
     return c.json({accepted:result.accepted,duplicate:result.duplicate??false,diagnostics_accepted:typeof result.diagnostics_accepted==='boolean'?result.diagnostics_accepted:null,diagnostics_reason:['storage_budget','cloud_diagnostics_disabled','stored','no_diagnostics','historical_unknown'].includes(result.diagnostics_reason??'')?result.diagnostics_reason:undefined,diagnostics_request_id:typeof result.diagnostics_request_id==='string'&&idSchema.safeParse(result.diagnostics_request_id).success?result.diagnostics_request_id:null,config:config.success?config.data:{},server_time:new Date().toISOString()});
   };
   for(const path of ['/api/v1/telemetry','/api/v1/logs','/api/v1/diagnostics','/api/v1/heartbeat'])app.post(path,ingest);
   app.get('/api/v1/device/config',async c=>{
     const token=deviceToken(c.req.header('Authorization'));
     const result=await new Database(c.env,fetcher).rpc<{device_id:string;config:unknown}>('device_config',{p_token_hash:await sha256(token)});
-    return c.json({device_id:result.device_id,config:parse(configSchema,result.config)});
+    return c.json({device_id:result.device_id,config:parse(storedConfigSchema,result.config)});
   });
 
   app.post('/api/v1/enrollment',async c=>{
@@ -69,8 +69,18 @@ export function createApp(fetcher:Fetcher=fetch){
   });
   app.post('/api/v1/devices/:id/config',async c=>{
     const db=new Database(c.env,fetcher),user=await db.user(bearer(c.req.header('Authorization'))),id=parse(idSchema,c.req.param('id'));
-    const device=await db.ownedDevice(id,user.id);const config=parse(configSchema,await readJson(c.req.raw,8192));
-    await db.patch('devices','id=eq.'+id+'&owner_id=eq.'+user.id,{config:{...parse(configSchema,device.config??{}),...config}});return c.json({ok:true});
+    const config=parse(configSchema,await readJson(c.req.raw,8192));
+    for(let attempt=0;attempt<3;attempt++){
+      const device=await db.ownedDevice(id,user.id);
+      const previous=device.config??{};
+      const updated=await db.call<{id:string}[]>(
+        '/rest/v1/devices?id=eq.'+id+'&owner_id=eq.'+user.id+'&config=eq.'+encodeURIComponent(JSON.stringify(previous))+'&select=id',
+        {method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({config:{...parse(storedConfigSchema,previous),...config}})},
+      );
+      if(!Array.isArray(updated))throw new ApiError(503,'invalid_backend_response');
+      if(updated.length===1)return c.json({ok:true});
+    }
+    throw new ApiError(409,'config_changed_retry');
   });
   app.post('/api/v1/devices/:id/rotate',async c=>{
     const db=new Database(c.env,fetcher),user=await db.user(bearer(c.req.header('Authorization'))),id=parse(idSchema,c.req.param('id'));await db.ownedDevice(id,user.id);
@@ -123,20 +133,19 @@ export function createApp(fetcher:Fetcher=fetch){
       updated=Array.isArray(rows)&&rows.length===1;
       definitivelyMissing=Array.isArray(rows)&&rows.length===0;
     }catch{}
-    if(!updated){
-      if(definitivelyMissing){
-        // A definite zero-row update means the snapshot was deleted. The object is orphaned.
-        await db.rpc('enqueue_storage_deletion',{p_object_path:object_path});
-        throw new ApiError(409,'snapshot_changed_retry');
-      }
-      // A lost response may follow a committed PATCH. Never queue that live object for deletion.
-      let confirmed=false;
+    if(!updated&&!definitivelyMissing){
+      // A lost response may follow a committed PATCH. Read back before attempting cleanup.
       try{
         const current=await db.call<{object_path:string|null}[]>('/rest/v1/diagnostics?id=eq.'+snapshot+'&device_id=eq.'+id+'&select=object_path');
-        confirmed=Array.isArray(current)&&current.length===1&&current[0].object_path===object_path;
+        updated=Array.isArray(current)&&current.length===1&&current[0].object_path===object_path;
+        definitivelyMissing=Array.isArray(current)&&current.length===0;
       }catch{}
-      if(!confirmed)throw new ApiError(503,'archive_commit_unconfirmed');
     }
+    if(definitivelyMissing){
+      await db.rpc('enqueue_storage_deletion',{p_object_path:object_path});
+      throw new ApiError(409,'snapshot_changed_retry');
+    }
+    if(!updated)throw new ApiError(503,'archive_commit_unconfirmed');
     return c.json({object_path});
   });
 
