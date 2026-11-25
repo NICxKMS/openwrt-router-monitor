@@ -1,0 +1,12 @@
+#!/bin/sh
+# BusyBox ntpd -S events, verified against the local ntpd implementation.
+case "$ACTION" in
+    stratum|step|periodic)
+        case "$stratum" in ''|*[!0-9]*)exit 0;;esac
+        if [ "$stratum" -gt 0 ] && [ "$stratum" -lt 16 ];then
+            umask 077
+            : > /tmp/nicx-telemetry-clock-synced
+        fi
+        ;;
+    unsync)rm -f /tmp/nicx-telemetry-clock-synced;;
+esac

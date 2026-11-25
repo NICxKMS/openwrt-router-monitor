@@ -1,0 +1,8 @@
+{
+  "admin/services/nicx-telemetry": {
+    "title": "Router telemetry",
+    "order": 65,
+    "action": {"type": "view", "path": "nicx-telemetry"},
+    "depends": {"acl": ["luci-app-nicx-telemetry"], "uci": {"nicx-telemetry": true}}
+  }
+}

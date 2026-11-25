@@ -1,0 +1,13 @@
+{
+  "luci-app-nicx-telemetry": {
+    "description": "Configure outbound telemetry and inspect bounded local status",
+    "read": {
+      "ubus": {"nicx.telemetry": ["status"]},
+      "uci": ["nicx-telemetry"]
+    },
+    "write": {
+      "ubus": {"nicx.telemetry": ["test", "snapshot", "enroll", "restart", "set_token"]},
+      "uci": ["nicx-telemetry"]
+    }
+  }
+}
