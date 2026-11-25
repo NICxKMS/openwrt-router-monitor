@@ -132,6 +132,10 @@ case "$1" in
                     printf '{"request_id":"%s","kind":"%s","snapshot":' "$request_id" "$kind"
                     cat "$source_file";printf '}\n'
                 } > "$snapshot_tmp"
+                # Reject interrupted/corrupt cached JSON before it can invalidate a whole batch.
+                if ! jshn -R "$snapshot_tmp" >/dev/null 2>&1;then
+                    rm -f "$snapshot_tmp";reply_error snapshot_not_yet_available;exit 0
+                fi
                 snapshot_create "$request_id" "$kind"
                 mv "$snapshot_tmp" "$STATE/snapshot"
                 json_init;json_add_boolean ok 1;json_add_string request_id "$request_id";json_add_string kind "$kind";json_add_string state queued

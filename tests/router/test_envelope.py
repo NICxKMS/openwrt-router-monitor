@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,8 +68,26 @@ enqueue s "$STATE/item";seal_batch;cat "$STATE/pending";echo;seal_batch;cat "$ST
     def test_slow_detail_is_sparse_on_subsequent_samples(self):
         output=self.shell('collect_detail;collect_processes;collect_wifi;collect_connectivity;collect_sample;collect_sample;cat "$STATE/sample"')
         sample=json.loads(output)
-        self.assertEqual(set(sample['detail']),{'cpu','meminfo'})
+        self.assertEqual(set(sample['detail']),{'cpu','meminfo','cadence'})
         self.assertLess(len(output.encode()),1800)
+
+    def test_each_sample_reports_local_and_adaptive_collection_cadence(self):
+        output=self.shell('''sample_interval=120;effective_sample_interval=120;detail_interval=300;adaptive_active=0
+collect_sample;cat "$STATE/sample"
+adaptive_active=1;effective_sample_interval=300
+collect_sample;cat "$STATE/sample"
+''')
+        normal,end=json.JSONDecoder().raw_decode(output)
+        adaptive=json.loads(output[end:])
+        self.assertEqual(normal['detail'].get('cadence'),{'sample_s':120,'connectivity_s':30,'detail_s':300})
+        self.assertEqual(adaptive['detail'].get('cadence'),{'sample_s':300,'connectivity_s':60,'detail_s':600})
+
+    def test_oversized_detail_fallback_keeps_collection_cadence(self):
+        (self.state/'detail.json').write_text(json.dumps({'oversized':'x'*16000}))
+        (self.state/'detail.dirty').touch()
+        sample=json.loads(self.shell('sample_interval=120;effective_sample_interval=120;detail_interval=3600;adaptive_active=1;collect_sample;cat "$STATE/sample"'))
+        self.assertEqual(sample['detail'].get('cadence'),{'sample_s':120,'connectivity_s':60,'detail_s':3600})
+        self.assertNotIn('oversized',sample['detail'])
 
     def test_adaptive_sampling_has_hysteresis_and_hard_bounds(self):
         output=self.shell('''sample_interval=10;adaptive_sampling=1
@@ -318,6 +337,58 @@ if [ -s "$STATE/pending" ];then echo retained;else echo removed;fi
         self.assertEqual(json.loads((self.state/'snapshot-status.json').read_text())['request_id'],first['request_id'])
         second=request();self.assertFalse(second['ok']);self.assertEqual(second['error'],'snapshot_in_progress')
         self.assertEqual(json.loads((self.state/'snapshot').read_text())['request_id'],first['request_id'])
+
+    def test_network_snapshot_reads_complete_cache_during_refresh(self):
+        self.write_tool('uci','#!/bin/sh\necho 1\n')
+        previous={'interfaces':[], 'rx_bytes_delta':None, 'tx_bytes_delta':None, 'elapsed_s':None}
+        (self.state/'status.json').write_text('{"cloud_diagnostics_enabled":true}')
+        (self.state/'network.json').write_text(json.dumps(previous))
+        shell=([os.environ['NICX_BUSYBOX'],'ash'] if os.environ.get('NICX_BUSYBOX') else ['bash','--posix'])
+        # Pause after the collector opens its output, before awk writes it.
+        # A concurrent RPC must still see the previously committed cache.
+        collector=subprocess.Popen(shell+['-c','''
+. "$NICX_LIB/agent.sh"
+awk() {
+    case "$*" in *network.awk*)
+        : > "$STATE/network-refresh-started"
+        while [ ! -e "$STATE/network-refresh-release" ];do sleep .01;done;;
+    esac
+    command awk "$@"
+}
+collect_network
+'''],env=self.env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        try:
+            deadline=time.monotonic()+5
+            while not (self.state/'network-refresh-started').exists() and time.monotonic()<deadline:
+                time.sleep(.01)
+            self.assertTrue((self.state/'network-refresh-started').exists(),'collector did not reach refresh barrier')
+            rpc=ROOT/'openwrt/nicx-telemetry/files/usr/libexec/rpcd/nicx.telemetry'
+            result=subprocess.run(shell+[str(rpc),'call','snapshot'],input='{"kind":"network"}\n',env=self.env,text=True,capture_output=True,timeout=5)
+            self.assertTrue(json.loads(result.stdout)['ok'],result.stdout)
+            try:
+                snapshot=json.loads((self.state/'snapshot').read_text())
+            except json.JSONDecodeError:
+                self.fail('snapshot RPC queued incomplete JSON during network refresh')
+            self.assertEqual(snapshot['snapshot'],previous)
+        finally:
+            (self.state/'network-refresh-release').touch()
+            stdout,stderr=collector.communicate(timeout=5)
+        self.assertEqual(collector.returncode,0,stderr)
+
+    def test_rpc_snapshot_rejects_corrupt_cached_json(self):
+        self.write_tool('uci','#!/bin/sh\necho 1\n')
+        (self.state/'status.json').write_text('{"cloud_diagnostics_enabled":true}')
+        rpc=ROOT/'openwrt/nicx-telemetry/files/usr/libexec/rpcd/nicx.telemetry'
+        shell=([os.environ['NICX_BUSYBOX'],'ash'] if os.environ.get('NICX_BUSYBOX') else ['bash','--posix'])
+        for cache in ('', '{"interfaces":['):
+            with self.subTest(cache=cache):
+                (self.state/'network.json').write_text(cache)
+                result=subprocess.run(shell+[str(rpc),'call','snapshot'],input='{"kind":"network"}\n',env=self.env,text=True,capture_output=True,timeout=5)
+                response=json.loads(result.stdout)
+                self.assertFalse(response['ok'],'corrupt cache must not enter the upload queue')
+                self.assertEqual(response['error'],'snapshot_not_yet_available')
+                self.assertFalse((self.state/'snapshot').exists())
+                self.assertFalse((self.state/'snapshot-status.json').exists())
 
     def test_snapshot_failed_discard_and_status_attachment(self):
         self.write_tool('curl', '#!/usr/bin/env python3\nimport sys\na=sys.argv[1:]\nopen(a[a.index("--output")+1],"w").write("{}")\nprint("400",end="")\n')

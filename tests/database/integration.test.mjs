@@ -28,6 +28,7 @@ before(async()=>{
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250004_advisor_indexes.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250005_archive_replacement.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250006_diagnostic_receipts.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../supabase/migrations/202611250007_alert_continuity.sql',import.meta.url),'utf8'));
  await db.exec(`insert into public.enrollment_tokens(owner_id,token_hash,expires_at,name) values ('${owner}','${'e'.repeat(64)}',now()+interval '5 minutes','test');`);
  device=(await rpc('enroll_device',['e'.repeat(64),token,'test','fixture'])).device_id;
 });
@@ -243,6 +244,78 @@ test('actual host-fixture agent sample ingests without converting unavailable ga
  const stored=(await q('select * from public.metric_samples where device_id=$1 and boot_id=$2 and seq=500',[device,current]))[0];
  assert.equal(stored.cpu_pct,sample.cpu_pct);assert.equal(stored.temp_c,sample.temp_c);assert.equal(stored.mem_available_kb,sample.mem_available_kb);
  assert.deepEqual(stored.detail.capabilities,sample.detail.capabilities);
+});
+// Isolated devices keep these cadence regressions independent of earlier fixtures.
+async function cadenceFixture(run,{metric='cpu_pct',threshold=80,sustain=240,config={}}={}) {
+ const id=crypto.randomUUID(),credential=crypto.randomUUID().replaceAll('-','').repeat(2),session=crypto.randomUUID();
+ await q('insert into public.devices(id,owner_id,name) values($1,$2,$3)',[id,owner,'CADENCE TEST FIXTURE']);
+ await q('insert into private.device_credentials(device_id,token_hash) values($1,$2)',[id,credential]);
+ await q('update public.devices set config=config||$1::jsonb where id=$2',[config,id]);
+ const rule=(await q("insert into public.alert_rules(device_id,metric,operator,threshold,sustain_s,hysteresis,cooldown_s) values($1,$2,'gt',$3,$4,0,0) returning id",[id,metric,threshold,sustain]))[0].id;
+ const started=Date.now()-86400000;
+ let seq=0;
+ const observe=async(offset,{cadence={sample_s:120,connectivity_s:30,detail_s:300},detail={},elapsed=120,cpu=95}={})=>{
+  const sample={...batch(++seq).samples[0],uptime_s:offset+10,observed_at:new Date(started+offset*1000).toISOString(),cpu_pct:cpu,elapsed_s:elapsed,detail:{...detail,...(cadence===null?{}:{cadence})}};
+  return rpc('ingest_batch',[credential,batch(seq,{device_id:id,boot_id:session,clock_synced:true,samples:[sample]})]);
+ };
+ const active=async(key)=>Number((await q('select count(*)::int n from public.alerts where device_id=$1 and rule_key=$2 and resolved_at is null',[id,key]))[0].n);
+ try {await run({id,rule,observe,active});} finally {await q('delete from public.devices where id=$1',[id]);}
+}
+const failedIpv4={connectivity:{ipv4:{available:true,reachable:false}}};
+test('cadence: local 120-second observations sustain CPU and consecutive probe alerts',async()=>{
+ await cadenceFixture(async({rule,observe,active})=>{
+  await observe(0,{detail:failedIpv4});await observe(120,{detail:failedIpv4});
+  assert.equal(await active(rule),0);assert.equal(await active('reachability:ipv4'),1);
+  await observe(240);
+  assert.equal(await active(rule),1);
+ });
+});
+test('cadence: adaptive 60-second probes preserve latency sustain and failure streaks',async()=>{
+ await cadenceFixture(async({rule,observe,active})=>{
+  const options={cadence:{sample_s:30,connectivity_s:60,detail_s:600},elapsed:30,detail:{connectivity:{ipv4:{available:true,reachable:false,latency_ms:100}}}};
+  await observe(0,options);await observe(60,options);
+  assert.equal(await active(rule),1);assert.equal(await active('reachability:ipv4'),1);
+ },{metric:'latency_ms',threshold:50,sustain:60,config:{wifi_interval:15}});
+});
+test('cadence: hourly detail sustains PSI and conntrack rules despite faster cloud requests',async()=>{
+ for(const metric of ['memory_psi_full_avg10','conntrack_pct'])await cadenceFixture(async({rule,observe,active})=>{
+  const options={cadence:{sample_s:10,connectivity_s:30,detail_s:3600},elapsed:10,detail:{memory:{psi:{memory:{full:{avg10:95}}}},firewall:{conntrack_count:95,conntrack_max:100}}};
+  await observe(0,options);await observe(3600,options);
+  assert.equal(await active(rule),1,metric+' must use observed detail cadence');
+ },{metric,sustain:3600,config:{detail_interval:60}});
+});
+test('cadence: legacy observations fall back to bounded monotonic elapsed time',async()=>{
+ await cadenceFixture(async({rule,observe,active})=>{
+  for(const offset of [0,120,240])await observe(offset,{cadence:null,elapsed:120,detail:failedIpv4});
+  assert.equal(await active(rule),1);assert.equal(await active('reachability:ipv4'),1);
+ });
+});
+test('cadence: a real gap still resets threshold sustain and probe failure streaks',async()=>{
+ await cadenceFixture(async({rule,observe,active})=>{
+  await observe(0,{detail:failedIpv4});await observe(1200,{detail:failedIpv4});
+  assert.equal(await active(rule),0);assert.equal(await active('reachability:ipv4'),0);
+  await observe(1320,{detail:failedIpv4});
+  assert.equal(await active(rule),0);assert.equal(await active('reachability:ipv4'),1);
+  await observe(1440);assert.equal(await active(rule),1);
+ });
+});
+test('cadence: invalid metadata cannot extend continuity across a real gap',async()=>{
+ for(const cadence of [{sample_s:'300',connectivity_s:'120',detail_s:'3600'},{sample_s:1e200,connectivity_s:1e200,detail_s:1e200},{sample_s:0,connectivity_s:-1,detail_s:null}])await cadenceFixture(async({rule,observe,active})=>{
+  await observe(0,{cadence,elapsed:10,detail:failedIpv4});await observe(120,{cadence,elapsed:10,detail:failedIpv4});
+  assert.equal(await active(rule),0);assert.equal(await active('reachability:ipv4'),0);
+ },{sustain:120});
+});
+test('deleting a device with an active rule alert cascades without a resolution notification',async()=>{
+ await cadenceFixture(async({id,rule,observe,active})=>{
+  await observe(0);assert.equal(await active(rule),1);
+  await q('delete from public.devices where id=$1',[id]);
+  for(const table of ['devices','alert_rules','alerts','metric_samples']) {
+   const key=table==='devices'?'id':'device_id';
+   assert.equal((await q(`select count(*)::int n from public.${table} where ${key}=$1`,[id]))[0].n,0,table);
+  }
+  assert.equal((await q('select count(*)::int n from private.notification_queue where device_id=$1',[id]))[0].n,0);
+  assert.equal((await q('select count(*)::int n from public.devices where id=$1',[device]))[0].n,1,'another device remains intact');
+ },{sustain:0});
 });
 test('credential rotation revokes previous token, deletion queues archive paths even through cascades',async()=>{
  await rpc('rotate_device_token',[device,owner,'f'.repeat(64)]);

@@ -20,7 +20,9 @@ collect_network() {
         printf '%s %s %s %s %s %s\n' "$device" "$logical" "$index" "$uptime" "$rx" "$tx" >> "$STATE/network.input"
     done
     unset seen_devices
-    awk -v state="$STATE/network.previous" -f "$LIB/network.awk" "$STATE/network.input" > "$STATE/network.json"
+    # RPC snapshots may read this cache while the next sample refreshes it.
+    awk -v state="$STATE/network.previous" -f "$LIB/network.awk" "$STATE/network.input" > "$STATE/network.new" &&
+        mv "$STATE/network.new" "$STATE/network.json"
 }
 collect_processes() {
     # RSS is not unique memory (shared pages can be counted by multiple processes).
@@ -255,6 +257,12 @@ collect_sample() {
     cores=$(jsonfilter -i "$STATE/cpu.json" -e '@.cores')
     printf '"cpu_pct":%s,"detail":{"cpu":{"cores":%s}' "${cpu:-null}" "${cores:-\{\}}" >> "$STATE/sample"
     printf ',"meminfo":' >> "$STATE/sample";cat "$STATE/memory.json" >> "$STATE/sample"
+    # Alert duration and freshness checks need the locally effective collection cadence.
+    # Keep it in the base sample even when extended collector data exceeds its bound.
+    set_cadence 30 120;connectivity_cadence=$scheduled_interval
+    set_cadence "${detail_interval:-300}" 3600;detail_cadence=$scheduled_interval
+    printf ',"cadence":{"sample_s":%s,"connectivity_s":%s,"detail_s":%s}' \
+        "${effective_sample_interval:-${sample_interval:-10}}" "$connectivity_cadence" "$detail_cadence" >> "$STATE/sample"
     cp "$STATE/sample" "$STATE/sample.base"
     for part in detail process wifi connectivity;do
         [ -s "$STATE/$part.json" ] && mv "$STATE/$part.dirty" "$STATE/$part.consuming" 2>/dev/null || continue
