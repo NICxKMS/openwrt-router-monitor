@@ -117,15 +117,25 @@ export function createApp(fetcher:Fetcher=fetch){
       await db.rpc('enqueue_storage_deletion',{p_object_path:object_path});throw new ApiError(503,'archive_upload_failed');
     }
     if(!response.ok){await db.rpc('enqueue_storage_deletion',{p_object_path:object_path});throw new ApiError(503,'archive_upload_failed');}
-    let updated=false;
+    let updated=false,definitivelyMissing=false;
     try{
       const rows=await db.call<unknown[]>('/rest/v1/diagnostics?id=eq.'+snapshot+'&device_id=eq.'+id,{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({object_path})});
       updated=Array.isArray(rows)&&rows.length===1;
+      definitivelyMissing=Array.isArray(rows)&&rows.length===0;
     }catch{}
     if(!updated){
-      // Upload can race a device/snapshot deletion. Ensure the orphan is removed durably.
-      await db.rpc('enqueue_storage_deletion',{p_object_path:object_path});
-      throw new ApiError(409,'snapshot_changed_retry');
+      if(definitivelyMissing){
+        // A definite zero-row update means the snapshot was deleted. The object is orphaned.
+        await db.rpc('enqueue_storage_deletion',{p_object_path:object_path});
+        throw new ApiError(409,'snapshot_changed_retry');
+      }
+      // A lost response may follow a committed PATCH. Never queue that live object for deletion.
+      let confirmed=false;
+      try{
+        const current=await db.call<{object_path:string|null}[]>('/rest/v1/diagnostics?id=eq.'+snapshot+'&device_id=eq.'+id+'&select=object_path');
+        confirmed=Array.isArray(current)&&current.length===1&&current[0].object_path===object_path;
+      }catch{}
+      if(!confirmed)throw new ApiError(503,'archive_commit_unconfirmed');
     }
     return c.json({object_path});
   });

@@ -50,4 +50,6 @@ Cloudflare can roll back a Worker deployment; schema rollback is a separate revi
 
 Disable/stop only nicx-telemetry locally. Revoke the device in the dashboard, export any history you need, then delete it to remove associated rows and enqueue archive cleanup. Keep the cloud Worker Cron running until queued Storage deletions finish. Uninstall LuCI/agent with your snapshot's package manager; token files are preserved deliberately for upgrades/backups and can be explicitly removed locally after revocation. Do not delete unrelated configuration or networking packages.
 
+If an archive upload succeeds but its database registration response is lost, the service reads back its exact object path. A matching pointer confirms success; an unavailable or different result remains unconfirmed. It never queues a potentially referenced archive for deletion. This can leave an unreferenced object after an uncertain registration failure. Storage usage includes those objects. For manual reconciliation, pause archive creation, inspect older bucket objects against current diagnostic pointers, and remove only confirmed unreferenced objects. Never infer that an object is orphaned solely from a timeout.
+
 Disabling monitoring never requires changing routing, DNS, offloading, ISP settings or firewall ports.
