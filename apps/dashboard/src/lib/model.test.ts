@@ -61,6 +61,7 @@ describe('honest measurement formatting', () => {
     expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 6 * 3600000)).toBe('05:30');
     expect(compactAxisTime(Date.parse('2026-11-25T00:00:15Z'), 'Asia/Kolkata', 15 * 60000)).toBe('05:30:15');
     expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 30 * 86400000)).toBe('25 Nov');
+    expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 400 * 86400000)).toBe('25 Nov 2026');
     expect(rate('12500000', '10')).toBe(10);
     expect(formatMbps(0.005)).toBe('5 Kbps');
     expect(formatMbps(0.42)).toBe('0.42 Mbps');
@@ -69,6 +70,8 @@ describe('honest measurement formatting', () => {
     expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: null } as Sample])).toEqual({ rx: 300, tx: null, total: null });
     expect(sumTrafficBytes([{ rx_bytes_delta: 0, tx_bytes_delta: 0 } as Sample])).toEqual({ rx: 0, tx: 0, total: 0 });
     expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: 100 } as Sample])).toEqual({ rx: 300, tx: 100, total: 400 });
+    expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: 100, sample_count: 2,
+      rx_delta_count: 1, tx_delta_count: 2 } as Sample])).toEqual({ rx: null, tx: 100, total: null });
   });
 });
 

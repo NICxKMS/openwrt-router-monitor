@@ -18,7 +18,8 @@ export function subscribeZoomReset(scopeKey: string, listener: () => void) {
   }
   set.add(listener);
   return () => {
-    set?.delete(listener);
+    set.delete(listener);
+    if (set.size === 0 && zoomListeners.get(scopeKey) === set) zoomListeners.delete(scopeKey);
   };
 }
 

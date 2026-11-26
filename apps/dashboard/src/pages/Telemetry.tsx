@@ -597,41 +597,35 @@ export function Memory() {
   );
 }
 
-async function readBillingCycleBytes(deviceId: string, cycleStart: string, asOfDay: string) {
+async function readDailyTraffic(deviceId: string, fromDay: string, throughDay: string) {
   const pageSize = 1000;
-  let total = 0;
+  const daily: Row[] = [];
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await db!
       .from('bandwidth_daily')
-      .select('rx_bytes,tx_bytes')
+      .select('device_id,day,interface_name,role,rx_bytes,tx_bytes,coverage_s')
       .eq('device_id', deviceId)
-      .gte('day', cycleStart)
-      .lte('day', asOfDay)
-      .order('day')
+      .gte('day', fromDay)
+      .lte('day', throughDay)
+      .order('day', { ascending: false })
       .order('interface_name')
       .order('role')
       .range(offset, offset + pageSize - 1);
     if (error) return { data: null, error };
-    for (const row of data) total += (num(row.rx_bytes) ?? 0) + (num(row.tx_bytes) ?? 0);
-    if (data.length < pageSize) return { data: total, error: null };
+    daily.push(...data);
+    if (data.length < pageSize) return { data: daily, error: null };
   }
 }
 
 export function Network() {
   const { device, tick, range, latest, history } = useMonitor();
   const rangeIdentity = timeRangeKey(range);
+  const fromDay = range.from.slice(0, 10);
+  const throughDay = new Date(Date.parse(range.to) - 1).toISOString().slice(0, 10);
   const q = useQuery(
-    () =>
-      db!
-        .from('bandwidth_daily')
-        .select('device_id,day,interface_name,role,rx_bytes,tx_bytes,coverage_s')
-        .eq('device_id', device!.id)
-        .gte('day', range.from.slice(0, 10))
-        .lte('day', range.to.slice(0, 10))
-        .order('day', { ascending: false })
-        .limit(360),
+    () => readDailyTraffic(device!.id, fromDay, throughDay),
     [device?.id, rangeIdentity],
-    [range.live ? tick : 0, range.from, range.to],
+    [range.live ? tick : 0, fromDay, throughDay],
   );
 
   const rxMbps = rate(latest?.rx_bytes_delta, latest?.elapsed_s);
@@ -650,10 +644,12 @@ export function Network() {
   const asOfDay = now.toISOString().slice(0, 10);
 
   const cycleQuery = useQuery(
-    () =>
-      device && quotaGb > 0
-        ? readBillingCycleBytes(device.id, cycleStartStr, asOfDay)
-        : Promise.resolve({ data: null, error: null }),
+    async () => {
+      if (!device || quotaGb <= 0) return { data: null, error: null };
+      const { data, error } = await readDailyTraffic(device.id, cycleStartStr, asOfDay);
+      const observed = data?.reduce((total, row) => total + (num(row.rx_bytes) ?? 0) + (num(row.tx_bytes) ?? 0), 0);
+      return { data: observed ?? null, error };
+    },
     [device?.id, quotaGb, cycleStartStr, asOfDay],
     [range.live ? tick : 0],
   );
@@ -661,17 +657,10 @@ export function Network() {
   const cycleReady = cycleQuery.isCurrent && !cycleQuery.loading && !cycleQuery.error;
   const cycleBytes = cycleReady ? cycleQuery.data : null;
   const quotaPct = quotaGb > 0 && cycleBytes !== null ? (cycleBytes / (quotaGb * 1e9)) * 100 : null;
-  const todayUtc = now.toISOString().slice(0, 10);
-  const todayBytes = dailyRows
-    .filter((r) => String(r.day) === todayUtc)
-    .reduce<{ rx: number; tx: number; seen: boolean }>(
-      (acc, r) => ({
-        rx: acc.rx + (num(r.rx_bytes) ?? 0),
-        tx: acc.tx + (num(r.tx_bytes) ?? 0),
-        seen: true,
-      }),
-      { rx: 0, tx: 0, seen: false },
-    );
+  const todayTraffic = sumTrafficBytes(dailyRows.filter((row) => row.day === asOfDay).map((row) => ({
+    rx_bytes_delta: num(row.rx_bytes),
+    tx_bytes_delta: num(row.tx_bytes),
+  })));
 
   return (
     <>
@@ -693,8 +682,8 @@ export function Network() {
         ) : (
           <Stat
             label="Today UTC consumed"
-            value={todayBytes.seen ? bytes(todayBytes.rx + todayBytes.tx) : '—'}
-            sub={todayBytes.seen ? `↓ ${bytes(todayBytes.rx)} · ↑ ${bytes(todayBytes.tx)}` : 'Today is outside the selected range or usage is unavailable'}
+            value={bytes(todayTraffic?.total)}
+            sub={todayTraffic ? `↓ ${bytes(todayTraffic.rx)} · ↑ ${bytes(todayTraffic.tx)}${todayTraffic.total === null ? ' · incomplete data' : ''}` : 'Today is outside the selected range or usage is unavailable'}
           />
         )}
       </div>
@@ -730,7 +719,7 @@ export function Network() {
 
       <Card
         title="Daily internet usage"
-        description="Observed bytes per UTC day across WAN uplinks. Incomplete coverage understates totals."
+        description="Observed bytes for all UTC dates in the selection, including observations outside its start or end time on those days. Coverage gaps can understate totals."
       >
         <QueryState
           {...q}
@@ -786,7 +775,7 @@ export function Network() {
 }
 
 export function WiFi() {
-  const { latest, device } = useMonitor();
+  const { latest, device, tick } = useMonitor();
   const detail = object(latest?.detail);
   const wifi = object(detail.wifi);
   const radios = rows(wifi.radios);
@@ -795,6 +784,7 @@ export function WiFi() {
   const clientNamesQuery = useQuery(
     () => db!.from('client_names').select('device_id,client_id,name').eq('device_id', device!.id).order('client_id').limit(200),
     [device?.id],
+    [tick],
   );
   const nameByClientId = new Map<string, string>(
     (clientNamesQuery.data || []).map((row: Row) => [String(row.client_id), String(row.name)]),
@@ -972,7 +962,7 @@ export function Internet() {
         <Stat
           label="Probe health"
           value={probeEntries.length ? `${reachableCount} / ${probeEntries.length}` : '—'}
-          sub={probeEntries.length ? 'Probes reachable' : 'Optional probes disabled'}
+          sub={probeEntries.length ? 'Probes reachable' : connectivity.reason === 'optional probes disabled' ? 'Optional probes disabled' : 'No probe results reported'}
           tone={probeEntries.length && reachableCount < probeEntries.length ? 'warn' : probeEntries.length ? 'good' : 'default'}
         />
         <Stat

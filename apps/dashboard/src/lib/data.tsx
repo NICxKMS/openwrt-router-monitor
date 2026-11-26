@@ -85,6 +85,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const waiters = useRef<{ resolve: () => void; reject: (error: Error) => void }[]>([]);
   const loadedWindowRef = useRef('');
   const lastManualEpochRef = useRef(0);
+  const lastDeviceManualEpochRef = useRef(0);
   const loadedDevicesEpochRef = useRef(-1);
 
   const track = useCallback((id: string, promise: Promise<void>) => {
@@ -122,7 +123,8 @@ export function MonitorProvider({ session, children }: { session: Session; child
   }, [theme]);
 
   useEffect(() => {
-    const manualTriggered = manualEpoch !== lastManualEpochRef.current;
+    const manualTriggered = manualEpoch !== lastDeviceManualEpochRef.current;
+    lastDeviceManualEpochRef.current = manualEpoch;
     // When browsing a frozen historical window, skip background polling of device list after initial load.
     if (!range.live && loadedDevicesEpochRef.current >= 0 && !manualTriggered) {
       return;
@@ -192,6 +194,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
     if (!range.live && loadedWindowRef.current === windowKey && !manualTriggered) {
       return;
     }
+    lastManualEpochRef.current = manualEpoch;
     let active = true;
     const query = async () => {
       try {
@@ -225,7 +228,6 @@ export function MonitorProvider({ session, children }: { session: Session; child
         if (error) throw new Error(error.message);
         if (!active) return;
         loadedWindowRef.current = windowKey;
-        lastManualEpochRef.current = manualEpoch;
         setMetricError('');
         setLatestDevice(device.id);
         const nextSnapshot = snapshotResult.data as Sample | null;

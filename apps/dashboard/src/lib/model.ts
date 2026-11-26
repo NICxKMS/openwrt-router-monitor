@@ -48,6 +48,8 @@ export interface Sample {
   detail?: Row;
   interfaces?: Row[];
   sample_count?: number;
+  rx_delta_count?: number | null;
+  tx_delta_count?: number | null;
 }
 export interface TimeRange { from: string; to: string; live: boolean; hours: number }
 
@@ -96,15 +98,25 @@ export function formatMbps(v: number | null): string {
   return fmt(v, ' Mbps', 1);
 }
 
-export function sumTrafficBytes(samples: Sample[]): { rx: number | null; tx: number | null; total: number | null } | null {
+type TrafficSample = Pick<Sample, 'rx_bytes_delta' | 'tx_bytes_delta' | 'rx_delta_count' | 'tx_delta_count' | 'sample_count'>;
+
+export function trafficDelta(sample: TrafficSample, direction: 'rx' | 'tx'): number | null {
+  const count = num(sample[`${direction}_delta_count`]);
+  const expected = num(sample.sample_count) ?? 1;
+  // Older rollups lack validity counts. Only one-sample buckets are unambiguous.
+  if ((count ?? (expected === 1 ? 1 : 0)) !== expected) return null;
+  return num(sample[`${direction}_bytes_delta`]);
+}
+
+export function sumTrafficBytes(samples: TrafficSample[]): { rx: number | null; tx: number | null; total: number | null } | null {
   let rx = 0;
   let tx = 0;
   let rxComplete = true;
   let txComplete = true;
   let seen = false;
   for (const sample of samples) {
-    const received = num(sample.rx_bytes_delta);
-    const transmitted = num(sample.tx_bytes_delta);
+    const received = trafficDelta(sample, 'rx');
+    const transmitted = trafficDelta(sample, 'tx');
     if (received === null) rxComplete = false;
     else { rx += received; seen = true; }
     if (transmitted === null) txComplete = false;
@@ -167,6 +179,7 @@ export function compactAxisTime(value: unknown, zone: string, spanMs = 6 * 36000
       timeZone: zone,
       day: 'numeric',
       month: 'short',
+      ...(spanMs > 365 * 86400000 ? { year: 'numeric' as const } : {}),
     }).format(d);
   }
   if (spanMs > 36 * 3600000) {

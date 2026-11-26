@@ -67,3 +67,21 @@ it('keeps uptime labels after zooming a comparison', () => {
   mock.on.mock.calls.find(([name]) => name === 'datazoom')?.[1]();
   expect(mock.setOption.mock.lastCall?.[0].xAxis.axisLabel.formatter(3600)).toBe('1h');
 });
+
+it('retains unknown days, measured zero, and small volumes next to GiB values', () => {
+  const mixed = { received_at: '2026-11-25T00:00:00Z', cpu_pct: null, mem_available_kb: null,
+    temp_c: null, rx_bytes_delta: 1024 ** 3, tx_bytes_delta: 100000, elapsed_s: 10 };
+  render(<Chart data={[mixed]} metric="network_mib" />);
+  expect(mock.setOption.mock.lastCall?.[0].series[1].data[0].value[1]).toBe(100000 / 1024 ** 3);
+  render(<Chart data={[]} metric="daily_traffic" dailyRows={[
+    {day: '2026-11-25', rx_bytes: mixed.rx_bytes_delta, tx_bytes: mixed.tx_bytes_delta},
+    {day: '2026-11-26', rx_bytes: null, tx_bytes: 0},
+    {day: '2026-11-27', rx_bytes: 0, tx_bytes: null},
+  ]} />);
+  const series = mock.setOption.mock.lastCall?.[0].series;
+  expect(series[0].data).toEqual([1, null, 0]);
+  expect(series[1].data).toEqual([100000 / 1024 ** 3, 0, null]);
+  const tooltip = mock.setOption.mock.lastCall?.[0].tooltip.formatter;
+  expect(tooltip([{axisValue: '2026-11-25', value: series[1].data[0]}])).toContain('97.7 KiB');
+  expect(tooltip([{axisValue: '2026-11-27', value: null}])).toContain('—');
+});

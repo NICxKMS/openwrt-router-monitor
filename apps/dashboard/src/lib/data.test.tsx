@@ -40,3 +40,21 @@ it('keeps existing query data mounted during background refreshes without flashi
   expect(screen.getByText('VALUE:1')).toBeTruthy();
   await waitFor(()=>expect(screen.getByText('VALUE:2')).toBeTruthy());
 });
+
+it('does not repeat a failed manual refresh of an already loaded historical window', async () => {
+  vi.useFakeTimers();
+  render(<MonitorProvider session={session}><RefreshProbe /></MonitorProvider>);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  act(() => screen.getByText('Historical window').click());
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByText('CPU 9')).toBeTruthy();
+  mock.rpc.mockResolvedValueOnce({data: null, error: {message: 'temporary history error'}});
+  act(() => screen.getByText('Refresh current page').click());
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByText('Refresh unconfirmed')).toBeTruthy();
+  const historyReads = mock.rpc.mock.calls.length;
+  const deviceReads = mock.from.mock.calls.filter(([table]) => table === 'devices').length;
+  await act(() => vi.advanceTimersByTimeAsync(60000));
+  expect(mock.rpc).toHaveBeenCalledTimes(historyReads);
+  expect(mock.from.mock.calls.filter(([table]) => table === 'devices')).toHaveLength(deviceReads);
+});

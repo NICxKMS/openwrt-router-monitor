@@ -274,6 +274,20 @@ describe('structured telemetry views', () => {
     expect(screen.getByText('2 GB used of 200 GB')).toBeInTheDocument();
   });
 
+  it('loads daily traffic past one API page and keeps incomplete current-day totals unavailable', async () => {
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    fixture.monitor.range = {from: '2026-11-24T12:00:00Z', to: '2026-11-25T12:00:00Z', live: false, hours: 24};
+    fixture.bandwidthDaily = Array.from({ length: 1000 }, (_, index) => ({
+      device_id: 'dev-1', day: '2026-11-24', interface_name: `fixture-${index}`, role: 'wan', rx_bytes: 0, tx_bytes: 0,
+    }));
+    fixture.bandwidthDaily.push({
+      device_id: 'dev-1', day: '2026-11-25', interface_name: 'fixture-last', role: 'wan', rx_bytes: 1024, tx_bytes: null,
+    });
+    render(<Network />);
+    expect(await screen.findByText('fixture-last')).toBeInTheDocument();
+    expect(screen.getByText('↓ 1 KiB · ↑ — · incomplete data')).toBeInTheDocument();
+  });
+
   it('hides the previous quota usage from the first render for another router', async () => {
     vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
     const router = { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200 } };

@@ -16,6 +16,7 @@ import {
   rows,
   sentenceCase,
   sumTrafficBytes,
+  trafficDelta,
   type Row,
   type Sample,
 } from '../lib/model';
@@ -148,21 +149,21 @@ export function HistoryChart({
         );
       }
     } else if (activeMetric === 'network_mbps') {
-      const rx = summarizeValues(history.map((d) => rate(d.rx_bytes_delta, d.elapsed_s)));
-      const tx = summarizeValues(history.map((d) => rate(d.tx_bytes_delta, d.elapsed_s)));
+      const rx = summarizeValues(history.map((d) => rate(trafficDelta(d, 'rx'), d.elapsed_s)));
+      const tx = summarizeValues(history.map((d) => rate(trafficDelta(d, 'tx'), d.elapsed_s)));
       if (rx || tx) {
         summaryContent = (
           <>
             {rx && (
               <>
-                <span>Avg ↓ <strong>{formatMbps(rx.avg)}</strong></span>
+                <span>Interval mean ↓ <strong>{formatMbps(rx.avg)}</strong></span>
                 <span>Peak ↓ <strong>{formatMbps(rx.max)}</strong></span>
                 {rx.latest !== null && <span>Latest ↓ <strong>{formatMbps(rx.latest)}</strong></span>}
               </>
             )}
             {tx && (
               <>
-                <span>Avg ↑ <strong>{formatMbps(tx.avg)}</strong></span>
+                <span>Interval mean ↑ <strong>{formatMbps(tx.avg)}</strong></span>
                 <span>Peak ↑ <strong>{formatMbps(tx.max)}</strong></span>
               </>
             )}
@@ -207,7 +208,7 @@ export function HistoryChart({
 
   const defaultDesc =
     activeMetric === 'network_mbps'
-      ? 'Transfer speed in Mbps. Line series show rate over time; drag or scroll to zoom.'
+      ? 'Transfer speed in Mbps. The interval mean gives each reported interval equal weight. Peak is the highest reported interval rate.'
       : activeMetric === 'network_mib'
         ? 'Bytes transferred in each interval bucket. Bars show volume consumed, not speed.'
         : 'Observed history. Drag to zoom; gaps mark missing intervals.';

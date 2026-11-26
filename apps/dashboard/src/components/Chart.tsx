@@ -6,7 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import type { ECharts } from 'echarts/core';
 import { useMonitor } from '../lib/data';
 import { getSavedZoom, setSavedZoom, subscribeZoomReset } from '../lib/chartZoom';
-import { axisTimeLabel, bytes, compactAxisTime, durationShort, fmt, num, rate, timeRangeKey, type Row, type Sample } from '../lib/model';
+import { axisTimeLabel, bytes, compactAxisTime, durationShort, fmt, num, rate, timeRangeKey, trafficDelta, type Row, type Sample } from '../lib/model';
 
 echarts.use([LineChart, BarChart, DataZoomComponent, GridComponent, TooltipComponent, LegendComponent, AxisPointerComponent, CanvasRenderer]);
 
@@ -207,10 +207,14 @@ export default function Chart({
         (!timestamps.length || timestamps.some((ts) => ts >= rangeFromMs - 60000 && ts <= rangeToMs + 60000));
       const hasValidRangeBounds = !isCompare && !isDaily && hasPointsInsideRange && rangeToMs > rangeFromMs;
 
+      const extent = timestamps.reduce(
+        ([min, max], timestamp) => [Math.min(min, timestamp), Math.max(max, timestamp)],
+        [Infinity, -Infinity],
+      );
       const fullSpanMs = hasValidRangeBounds
         ? rangeToMs - rangeFromMs
         : timestamps.length > 1
-          ? Math.max(...timestamps) - Math.min(...timestamps)
+          ? extent[1] - extent[0]
           : 6 * 3600000;
       fullSpanRef.current = fullSpanMs;
       const zoomFraction = savedZoom && typeof savedZoom.start === 'number' && typeof savedZoom.end === 'number' ? (savedZoom.end - savedZoom.start) / 100 : 1;
@@ -256,7 +260,7 @@ export default function Chart({
         const key = compare.metric;
         const extract = (d: Sample) => {
           if (key === 'rx_mbps') {
-            const r = rate(d.rx_bytes_delta, d.elapsed_s);
+            const r = rate(trafficDelta(d, 'rx'), d.elapsed_s);
             return r === null ? null : Number(r.toFixed(3));
           }
           const val = num(d[key]);
@@ -272,25 +276,32 @@ export default function Chart({
           makeLine('Comparison boot', palette.primary, seriesPoints(compare.comparison, extract, 'uptime'), { area: true }),
         ];
       } else if (isDaily) {
-        const byDay = new Map<string, { rx: number; tx: number }>();
+        const byDay = new Map<string, { rx: number | null; tx: number | null }>();
         for (const row of dailyRows || []) {
           const day = String(row.day || '');
           if (!day) continue;
-          const prev = byDay.get(day) || { rx: 0, tx: 0 };
-          prev.rx += num(row.rx_bytes) ?? 0;
-          prev.tx += num(row.tx_bytes) ?? 0;
+          const prev = byDay.get(day) || { rx: null, tx: null };
+          const rx = num(row.rx_bytes);
+          const tx = num(row.tx_bytes);
+          if (rx !== null) prev.rx = (prev.rx ?? 0) + rx;
+          if (tx !== null) prev.tx = (prev.tx ?? 0) + tx;
           byDay.set(day, prev);
         }
         categories = Array.from(byDay.keys()).sort((a, b) => a.localeCompare(b));
-        const maxDayBytes = Math.max(0, ...Array.from(byDay.values()).map((v) => Math.max(v.rx, v.tx)));
+        let maxDayBytes = 0;
+        for (const { rx, tx } of byDay.values()) maxDayBytes = Math.max(maxDayBytes, rx ?? 0, tx ?? 0);
         const useGib = maxDayBytes >= 1024 ** 3;
         const divisor = useGib ? 1024 ** 3 : 1048576;
         effectiveUnit = useGib ? ' GiB' : ' MiB';
         yBounds = { min: 0, max: null };
         showLegend = true;
+        const values = (direction: 'rx' | 'tx') => categories.map((day) => {
+          const value = byDay.get(day)?.[direction];
+          return value == null ? null : value / divisor;
+        });
         series = [
-          makeBar('Downloaded (Rx)', palette.primary, categories.map((day) => Number(((byDay.get(day)?.rx ?? 0) / divisor).toFixed(3)))),
-          makeBar('Uploaded (Tx)', palette.secondary, categories.map((day) => Number(((byDay.get(day)?.tx ?? 0) / divisor).toFixed(3)))),
+          makeBar('Downloaded (Rx)', palette.primary, values('rx')),
+          makeBar('Uploaded (Tx)', palette.secondary, values('tx')),
         ];
       } else if (metric === 'cpu_pct') {
         effectiveUnit = '%';
@@ -345,7 +356,7 @@ export default function Chart({
             'Download speed (Rx)',
             palette.primary,
             seriesPoints(data, (d) => {
-              const r = rate(d.rx_bytes_delta, d.elapsed_s);
+              const r = rate(trafficDelta(d, 'rx'), d.elapsed_s);
               return r === null ? null : Number(r.toFixed(3));
             }),
             { area: true },
@@ -354,13 +365,16 @@ export default function Chart({
             'Upload speed (Tx)',
             palette.secondary,
             seriesPoints(data, (d) => {
-              const r = rate(d.tx_bytes_delta, d.elapsed_s);
+              const r = rate(trafficDelta(d, 'tx'), d.elapsed_s);
               return r === null ? null : Number(r.toFixed(3));
             }),
           ),
         ];
       } else if (metric === 'network_mib') {
-        const peakBytes = Math.max(0, ...data.map((d) => Math.max(num(d.rx_bytes_delta) ?? 0, num(d.tx_bytes_delta) ?? 0)));
+        const peakBytes = data.reduce(
+          (peak, sample) => Math.max(peak, trafficDelta(sample, 'rx') ?? 0, trafficDelta(sample, 'tx') ?? 0),
+          0,
+        );
         const useGib = peakBytes >= 1024 ** 3;
         const divisor = useGib ? 1024 ** 3 : 1048576;
         effectiveUnit = useGib ? ' GiB' : ' MiB';
@@ -371,16 +385,16 @@ export default function Chart({
             'Downloaded volume (Rx)',
             palette.primary,
             seriesPoints(data, (d) => {
-              const v = num(d.rx_bytes_delta);
-              return v !== null ? Number((v / divisor).toFixed(3)) : null;
+              const v = trafficDelta(d, 'rx');
+              return v !== null ? v / divisor : null;
             }),
           ),
           makeBar(
             'Uploaded volume (Tx)',
             palette.secondary,
             seriesPoints(data, (d) => {
-              const v = num(d.tx_bytes_delta);
-              return v !== null ? Number((v / divisor).toFixed(3)) : null;
+              const v = trafficDelta(d, 'tx');
+              return v !== null ? v / divisor : null;
             }),
           ),
         ];
@@ -396,8 +410,11 @@ export default function Chart({
         ];
       }
 
+      const isVolume = isDaily || metric === 'network_mib';
+      const volumeDivisor = effectiveUnit === ' GiB' ? 1024 ** 3 : 1048576;
       const formatValue = (v: unknown) => {
-        if (typeof v !== 'number' || !Number.isFinite(v)) return 'Unavailable';
+        if (typeof v !== 'number' || !Number.isFinite(v)) return isVolume ? '—' : 'Unavailable';
+        if (isVolume) return bytes(v * volumeDivisor);
         if (effectiveUnit === ' Mbps' && v > 0 && v < 1) {
           return v < 0.01 ? `${fmt(v * 1000, ' Kbps', 0)}` : `${fmt(v, ' Mbps', 2)}`;
         }
@@ -449,11 +466,7 @@ export default function Chart({
                   const p = item as { marker?: string; seriesName?: string; value?: unknown; data?: SeriesPointMeta };
                   const rawVal = Array.isArray(p.value) ? p.value[1] : p.data?.value?.[1] ?? p.value;
                   const formatted = formatValue(typeof rawVal === 'number' ? rawVal : null);
-                  const extraBytes =
-                    (metric === 'network_mib' || isDaily) && typeof rawVal === 'number'
-                      ? ` <span style="opacity:.7">(${escapeHtml(bytes(rawVal * (effectiveUnit === ' GiB' ? 1024 ** 3 : 1048576)))})</span>`
-                      : '';
-                  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:3px"><span>${p.marker || ''}${escapeHtml(String(p.seriesName || ''))}</span><strong style="font-family:JetBrains Mono,ui-monospace,monospace">${escapeHtml(formatted)}${extraBytes}</strong></div>`;
+                  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:3px"><span>${p.marker || ''}${escapeHtml(String(p.seriesName || ''))}</span><strong style="font-family:JetBrains Mono,ui-monospace,monospace">${escapeHtml(formatted)}</strong></div>`;
                 })
                 .join('');
               const metaLine = metaParts.length ? `<div style="opacity:.72;font-size:11px;margin-top:2px">${escapeHtml(metaParts.join(' · '))}</div>` : '';

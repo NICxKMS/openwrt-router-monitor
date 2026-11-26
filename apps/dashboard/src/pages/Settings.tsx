@@ -99,7 +99,7 @@ export function Enrollment() {
 }
 
 export function Settings() {
-  const { device, zone, setZone, theme, setTheme, refresh, refreshSeconds, setRefreshSeconds } = useMonitor();
+  const { device, zone, setZone, theme, setTheme, refresh, refreshSeconds, setRefreshSeconds, tick } = useMonitor();
   const deviceId = device!.id;
   const context = useRef({ deviceId, generation: 0 });
   const appliedConfig = useRef<Row>({});
@@ -139,7 +139,7 @@ export function Settings() {
         .order('client_id')
         .limit(200),
     [device?.id],
-    [clientRevision],
+    [clientRevision, tick],
   );
 
   const path = `/api/v1/devices/${device!.id}`;
