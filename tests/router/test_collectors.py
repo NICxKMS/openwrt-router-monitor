@@ -31,6 +31,24 @@ class Collectors(unittest.TestCase):
             self.assertAlmostEqual(b['cpu_pct'], 35)
             self.assertEqual(b['cores']['cpu0'], 35)
 
+    def test_process_cpu_uses_machine_ticks_and_ignores_reused_pid(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = str(pathlib.Path(d) / 'previous')
+
+            def snapshot(idle, start, ticks, name="dnsmasq"):
+                fields = ['S'] + ['0'] * 19
+                fields[11:13] = [str(ticks), '4']
+                fields[19] = str(start)
+                data = f"cpu 100 0 50 {idle} 0 0 0 0\n9 ({name}) {' '.join(fields)}\n"
+                output = self.run_awk('process-cpu.awk', data, state=state).strip()
+                pathlib.Path(state + '.new').replace(state)
+                return output
+
+            self.assertEqual(snapshot(800, 1, 10), '')
+            self.assertEqual(snapshot(900, 1, 30), '20.000 9 dnsmasq')
+            self.assertEqual(snapshot(1000, 2, 50), '')
+            self.assertEqual(snapshot(1100, 2, 60, 'ksoftirqd/0'), '10.000 9 ksoftirqd/0')
+
     def test_counter_exact_above_float_precision_and_reset(self):
         with tempfile.TemporaryDirectory() as d:
             state = str(pathlib.Path(d) / 'net')
@@ -107,6 +125,49 @@ class Collectors(unittest.TestCase):
         r = json.loads(self.run_awk('memory.awk', 'MemTotal: 500000 kB\nMemFree: 12000 kB\nMemAvailable: 140000 kB\nSlab: 12000 kB\nSReclaimable: 8000 kB\nSUnreclaim: 4000 kB\nCached: 30000 kB\n'))
         self.assertEqual(r['mem_available_kb'], 140000)
         self.assertEqual(r['sunreclaim_kb'], 4000)
+
+    def test_memory_accounting_keeps_shared_ram_and_residual_separate(self):
+        counters = {
+            'MemTotal': 1000, 'MemFree': 200, 'MemAvailable': 400, 'AnonPages': 300,
+            'Cached': 160, 'Shmem': 60, 'Buffers': 40, 'SwapCached': 5, 'Slab': 80,
+            'SReclaimable': 30, 'KReclaimable': 40, 'KernelStack': 10,
+            'PageTables': 20, 'SecPageTables': 2, 'Percpu': 3, 'VmallocUsed': 75,
+        }
+        text = ''.join(f'{key}: {value} kB\n' for key, value in counters.items())
+        result = dict(line.split() for line in self.run_awk('memory.awk', text, mode='accounting').splitlines())
+        self.assertEqual(result['file_cache'], '100')
+        self.assertEqual(result['other_reclaimable_kernel'], '10')
+        self.assertEqual(result['counter_difference'], '175')
+        self.assertNotIn('swap_cache', result)
+        self.assertNotIn('VmallocUsed', result)
+        self.assertNotIn('counter_difference', self.run_awk('memory.awk', 'MemTotal: 100 kB\n', mode='accounting'))
+        too_much = text.replace('MemTotal: 1000', 'MemTotal: 800')
+        self.assertIn('counter_difference -25\n', self.run_awk('memory.awk', too_much, mode='accounting'))
+
+    def test_cpu_modes_split_guest_without_double_counting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = str(pathlib.Path(directory) / 'cpu')
+            first = 'cpu 100 20 50 800 20 10 20 0 30 10\n'
+            second = 'cpu 120 30 60 850 25 10 25 0 38 12\n'
+            self.run_awk('cpu.awk', first, state=state)
+            modes = json.loads(self.run_awk('cpu.awk', second, state=state))['modes']
+            self.assertEqual((modes['user'], modes['nice'], modes['guest'], modes['guest_nice']), (12, 8, 8, 2))
+            self.assertAlmostEqual(sum(modes.values()), 100)
+
+    def test_reserved_memory_reports_sizes_only_for_complete_dt_tuples(self):
+        def decode(reg, address_cells, size_cells):
+            return self.run_awk('memory-detail.awk', reg+'\n', mode='reg', address_cells=address_cells, size_cells=size_cells)
+        self.assertEqual(decode('00000000800000000000000002b0000000000000830000000000000000100000', 2, 2), '46137344\n')
+        self.assertEqual(decode('8000000000100000', 1, 1), '1048576\n')
+        self.assertEqual(decode('00000000800000000000000002b000', 2, 2), '')
+
+    def test_allocator_detail_uses_backing_pages_and_strips_function_context(self):
+        slabs = 'slabinfo - version: 2.1\n# header\nkmalloc-64 40 64 64 32 2 : tunables 0 0 0 : slabdata 2 3 0\n'
+        self.assertEqual(self.run_awk('memory-detail.awk', slabs, mode='slab', page_kb=4), '24576 2560 kmalloc-64\n')
+        source = 'allocinfo - version: 2.0\n# header\n 4096 2 drivers/net/ethernet/qualcomm/ppe/ppe.c:123 func:ppe_probe [qcom_ppe]\n 20000 3 mm/foo.c:4 func:bar accurate:no\n 2048 1 mm/bar.c:10 func:baz\n 8192 4 mm/high.c:2 func:bar\n'
+        self.assertEqual(self.run_awk('memory-detail.awk', source, mode='allocinfo'), '8192 4 mm/high.c:2\n4096 2 drivers/net/ethernet/qualcomm/ppe/ppe.c:123\n2048 1 mm/bar.c:10\n')
+        legacy = 'allocinfo - version: 1.0\n1024 1 mm/legacy.c:10 legacy_func\n'
+        self.assertEqual(self.run_awk('memory-detail.awk', legacy, mode='allocinfo'), '1024 1 mm/legacy.c:10\n')
 
     def test_logs_redact_and_group_and_burst_bound(self):
         data = ('Wed Nov 25 10:00:00 2026 daemon.err hostapd: failed peer 192.168.1.25 aa:bb:cc:dd:ee:ff password=hunter2\n' * 20)

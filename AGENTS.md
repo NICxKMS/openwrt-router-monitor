@@ -2,6 +2,21 @@
 
 Scope: this directory only. The parent firmware workspace has unrelated user edits; preserve them. Do not modify the parent's OpenWrt tree or install anything on the physical router without an explicit request.
 
+## Branch policy
+
+| Branch | Purpose | Lifecycle |
+| --- | --- | --- |
+| `main` | Mainline OpenWrt firmware and builds. | Long-lived. |
+| `router` | Firmware and packages for the owner's physical router. | Long-lived. |
+| `codex/nicx-router-monitor` | Nicx Router Monitor development and integration. | Long-lived. |
+| `router_monitor_ui_audit` | Audit Nicx Router Monitor and fix findings. | Temporary. Delete once all fixes are merged and verified on `codex/nicx-router-monitor`. |
+| `codex/jidu6111-thinlto-drivers` | JIDU6111 ThinLTO firmware profiles and Qualcomm driver fixes. | Temporary. Delete after its PR lands on `main` and the build is verified. |
+| `codex/jidu-deep-monitoring` | Detailed router memory and CPU telemetry. | Temporary. Delete when its PR has merged and the firmware feed pin remains reachable. |
+
+- When creating a branch, add it to this table with its purpose and intended lifecycle. Mark it as long-lived or temporary. For a temporary branch, specify the date or condition for deletion.
+- Open and merge all Nicx Router Monitor pull requests with `codex/nicx-router-monitor` as the only base branch. This includes audit fixes and monitoring-specific repository files such as `.github/workflows/nicx-router-monitor.yml`.
+- Verify the base branch on GitHub before merging. If a monitoring pull request targets another branch, retarget it to `codex/nicx-router-monitor` before merging.
+
 ## Architecture and conventions
 - pnpm workspace; React/Vite dashboard, Hono Worker, shared Zod wire schema, PostgreSQL migrations, BusyBox ash agent and LuCI packages.
 - No inbound router access, remote shell, direct database credentials on routers, sample data in production, or disabled TLS checks.

@@ -20,3 +20,7 @@ Device credentials authenticate even with an incorrect clock; boot UUID plus seq
 
 ## ADR 007: monitoring interface
 Compact industrial instrument panel: slate/navy, cyan data accents, amber warnings, clear monospace numbers, strong readable labels. Empty states describe missing enrollment/data; no fake chart values. Navigation groups system, traffic and operations. Responsive sidebar becomes a mobile drawer. Charts are lazy-loaded ECharts with shared range, zoom and null gaps. Local configuration failure is explained before login.
+
+## Deep system telemetry
+
+The agent uses existing sparse detail records for the RAM ledger, allocator reports and CPU breakdown. Its sysfs and procfs readers are bounded. Keeping firmware-reserved RAM and overlapping diagnostic views separate from Linux-managed accounting makes both discrepancies visible. Cloud schemas and router enrollment stay compatible.

@@ -240,7 +240,7 @@ export function memoryCategories(sample: Partial<Sample> | null): Row[] {
   const info = object(object(sample?.detail).meminfo);
   return [
     ['mem_free_kb', 'Free pages'],
-    ['cached_kb', 'File cache'],
+    ['cached_kb', 'Page cache (includes shared memory)'],
     ['slab_kb', 'Total slab'],
     ['sreclaimable_kb', 'Reclaimable slab'],
     ['sunreclaim_kb', 'Unreclaimable slab'],

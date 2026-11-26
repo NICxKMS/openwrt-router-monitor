@@ -7,6 +7,15 @@ CONFIG_DIR=${NICX_CONFIG_DIR:-/etc/nicx-telemetry}
 credential="$CONFIG_DIR/token"
 queue_limit=1572864
 
+load_privacy_salt() {
+    local file="$CONFIG_DIR/privacy-salt" salt
+    [ -f "$file" ] && [ ! -L "$file" ] && command -v sha256sum >/dev/null || return 1
+    [ "$(stat -c '%a:%u' "$file")" = "600:$(id -u)" ] || return 1
+    IFS= read -r salt < "$file" && [ "${#salt}" -eq 64 ] || return 1
+    case "$salt" in *[!a-f0-9]*) return 1;; esac
+    printf '%s' "$salt"
+}
+
 init_state_dirs() {
     [ ! -L "$STATE" ] || return 1
     mkdir -p "$STATE" "$STATE/queue" "$STATE/logs" || return 1
