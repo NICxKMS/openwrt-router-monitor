@@ -176,8 +176,8 @@ export function HistoryChart({
     } else if (activeMetric === 'network_mib' && trafficTotals) {
       summaryContent = (
         <>
-          <span>Downloaded (↓) <strong>{bytes(trafficTotals.rx)}</strong></span>
-          <span>Uploaded (↑) <strong>{bytes(trafficTotals.tx)}</strong></span>
+          <span>{trafficTotals.approximate ? 'Approx. downloaded (↓)' : 'Downloaded (↓)'} <strong>{bytes(trafficTotals.rx)}</strong></span>
+          <span>{trafficTotals.approximate ? 'Approx. uploaded (↑)' : 'Uploaded (↑)'} <strong>{bytes(trafficTotals.tx)}</strong></span>
           <span>{trafficTotals.approximate ? 'Approximate combined total' : 'Combined total'} <strong>{bytes(trafficTotals.total)}</strong>{trafficTotals.total === null && ' (incomplete data)'}</span>
           {cadence && <span>Resolution <strong>{cadence}</strong></span>}
         </>

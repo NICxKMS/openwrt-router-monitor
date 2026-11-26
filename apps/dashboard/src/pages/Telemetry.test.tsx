@@ -272,6 +272,8 @@ describe('structured telemetry views', () => {
     expect(await screen.findByText('2 GB used of 200 GB')).toBeInTheDocument();
     expect(screen.getAllByText('12 MiB').length).toBeGreaterThan(0);
     expect(screen.getByText('Approx. consumed in window')).toBeInTheDocument();
+    expect(screen.getByText('Approx. downloaded (↓)')).toBeInTheDocument();
+    expect(screen.getByText('Approx. uploaded (↑)')).toBeInTheDocument();
     expect(screen.getByText('Internet speed (Rx & Tx)')).toBeInTheDocument();
     expect(screen.getByText('Data consumed per interval')).toBeInTheDocument();
 

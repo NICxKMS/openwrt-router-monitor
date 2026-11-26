@@ -78,6 +78,8 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const [tick, setTick] = useState(0);
   const [manualEpoch, setManualEpoch] = useState(0);
   const [alertEpoch, setAlertEpoch] = useState(0);
+  const [deviceEpoch, setDeviceEpoch] = useState(0);
+  const [historyRetry, setHistoryRetry] = useState(0);
   const [deviceError, setDeviceError] = useState('');
   const [metricError, setMetricError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -87,10 +89,9 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const waiters = useRef<{ resolve: () => void; reject: (error: Error) => void }[]>([]);
   const pendingManual = useRef(0);
   const loadedWindowRef = useRef('');
-  const lastManualEpochRef = useRef(0);
-  const lastAlertEpochRef = useRef(0);
-  const lastDeviceManualEpochRef = useRef(0);
-  const loadedDevicesEpochRef = useRef(-1);
+  const loadedDevicesFor = useRef('');
+  const retryDeviceRead = useRef(false);
+  const retryHistoryRead = useRef(false);
 
   const track = useCallback((id: string, promise: Promise<void>) => {
     running.current.set(id, promise);
@@ -102,7 +103,8 @@ export function MonitorProvider({ session, children }: { session: Session; child
 
   const registry = useMemo(() => ({ epoch: manualEpoch, track }), [manualEpoch, track]);
   const refresh = useCallback((forceDevices = false) => {
-    if (forceDevices) loadedDevicesEpochRef.current = -1;
+    if (forceDevices || retryDeviceRead.current) setDeviceEpoch((n) => n + 1);
+    if (retryHistoryRead.current) setHistoryRetry((n) => n + 1);
     setTick((t) => t + 1);
   }, []);
   const refreshAlerts = useCallback(() => {
@@ -129,9 +131,9 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const rangeKey = timeRangeKey(range);
   const visible = useRef(document.visibilityState !== 'hidden');
   const device = useMemo(() => devices.find((d) => d.id === selected) || devices[0] || null, [devices, selected]);
-  const hasLoadedWindow = latestDevice === device?.id && dataRange === rangeKey;
-  // A frozen window can retry its initial load, but later ticks must not cancel explicit reads.
-  const metricTick = range.live || !hasLoadedWindow ? tick : 0;
+  // Background ticks advance live reads. Frozen reads retry only after an initial failure.
+  const liveTick = range.live ? tick : 0;
+  const metricRetry = range.live ? 0 : historyRetry;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -139,12 +141,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
   }, [theme]);
 
   useEffect(() => {
-    const manualTriggered = manualEpoch !== lastDeviceManualEpochRef.current;
-    lastDeviceManualEpochRef.current = manualEpoch;
-    // When browsing a frozen historical window, skip background polling of device list after initial load.
-    if (!range.live && loadedDevicesEpochRef.current >= 0 && !manualTriggered) {
-      return;
-    }
+    retryDeviceRead.current = false;
     let active = true;
     const work = withTimeout(
       db!
@@ -158,13 +155,16 @@ export function MonitorProvider({ session, children }: { session: Session; child
           setDeviceError(error.message);
           throw new Error(error.message);
         }
-        loadedDevicesEpochRef.current = manualEpoch;
+        loadedDevicesFor.current = session.user.id;
         const nextDevices = (data as Device[]) || [];
         setDevices((prev) => (sameSnapshot(prev, nextDevices) ? prev : nextDevices));
         setDeviceError('');
       })
       .catch((error) => {
-        if (active) setDeviceError(actionError(error));
+        if (active) {
+          retryDeviceRead.current = !range.live && loadedDevicesFor.current !== session.user.id;
+          setDeviceError(actionError(error));
+        }
         throw error;
       })
       .finally(() => {
@@ -175,7 +175,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
     return () => {
       active = false;
     };
-  }, [session.user.id, tick, manualEpoch, range.live, track]);
+  }, [session.user.id, liveTick, deviceEpoch, manualEpoch, range.live, track]);
 
   // Coalesce polling fallback with Realtime/manual refreshes so they never double-fetch back to back.
   useEffect(() => {
@@ -197,6 +197,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
   }, [paused, poll, refreshSeconds, tick]);
 
   useEffect(() => {
+    retryHistoryRead.current = false;
     if (!device) {
       setLatest(null);
       setHistory([]);
@@ -205,10 +206,6 @@ export function MonitorProvider({ session, children }: { session: Session; child
       return;
     }
     const windowKey = `${device.id}:${rangeKey}`;
-    const explicitRefresh = manualEpoch !== lastManualEpochRef.current || alertEpoch !== lastAlertEpochRef.current;
-    if (!range.live && loadedWindowRef.current === windowKey && !explicitRefresh) return;
-    lastManualEpochRef.current = manualEpoch;
-    lastAlertEpochRef.current = alertEpoch;
     let active = true;
     const query = async () => {
       try {
@@ -256,7 +253,10 @@ export function MonitorProvider({ session, children }: { session: Session; child
         setOpenAlerts((prev) => (sameSnapshot(prev, nextAlerts) ? prev : nextAlerts));
         setLastRefreshAt(new Date().toISOString());
       } catch (error) {
-        if (active) setMetricError(actionError(error));
+        if (active) {
+          retryHistoryRead.current = !range.live && loadedWindowRef.current !== windowKey;
+          setMetricError(actionError(error));
+        }
         throw error;
       }
     };
@@ -266,7 +266,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
     return () => {
       active = false;
     };
-  }, [device?.id, metricTick, range, rangeKey, manualEpoch, alertEpoch, track]);
+  }, [device?.id, liveTick, metricRetry, range, rangeKey, manualEpoch, alertEpoch, track]);
 
   // Child query effects and the core effects above register their real promises before this effect.
   useEffect(() => {

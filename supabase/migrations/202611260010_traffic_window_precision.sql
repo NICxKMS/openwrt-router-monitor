@@ -35,8 +35,9 @@ declare r int; first_minute timestamptz; rollup_from timestamptz:=p_from; raw_in
   rollup_from:=first_minute;
  end if;
  r:=case when p_from>=now()-interval '30 days' and p_to-p_from<=interval '2 days' then 60 when p_from>=now()-interval '180 days' and p_to-p_from<=interval '14 days' then 900 when p_from>=now()-interval '365 days' then 3600 else 86400 end;
+ -- Rollups retain aggregate elapsed time, with no start bound for the deltas.
  return query select a.bucket,a.cpu_sum/nullif(a.cpu_count,0),a.cpu_min,a.cpu_max,a.mem_available_sum/nullif(a.mem_available_count,0),a.temp_sum/nullif(a.temp_count,0),a.rx_bytes,a.tx_bytes,a.coverage_s,a.sample_count,a.rx_delta_count,a.tx_delta_count,
-  mod(extract(epoch from p_from),r)=0 and a.bucket+make_interval(secs=>r)<=p_to
+  false
  from public.metric_rollups a where a.device_id=p_device_id and a.resolution_s=r and a.bucket>=rollup_from and a.bucket<p_to order by a.bucket;
 end $$;
 

@@ -60,19 +60,60 @@ it('does not repeat a failed manual refresh of an already loaded historical wind
   expect(mock.from.mock.calls.filter(([table]) => table === 'devices')).toHaveLength(deviceReads);
 });
 
-it('applies an in-flight historical refresh despite a realtime tick', async () => {
-  render(<MonitorProvider session={session}><RefreshProbe /></MonitorProvider>);
+function TickProbe() {
+  const { refresh, tick } = useMonitor();
+  return <button onClick={() => refresh()}>Publish refresh tick {tick}</button>;
+}
+
+it('applies a manual historical refresh when a refresh tick actually changes', async () => {
+  render(<MonitorProvider session={session}><RefreshProbe /><TickProbe /></MonitorProvider>);
   await waitFor(() => expect(screen.getByText('CPU 3')).toBeTruthy());
   act(() => screen.getByText('Historical window').click());
   await waitFor(() => expect(screen.getByText('CPU 9')).toBeTruthy());
   const history = deferred<{data: {cpu_pct: number}[]; error: null}>();
   mock.rpc.mockReturnValueOnce(history.promise);
   act(() => screen.getByText('Refresh current page').click());
-  act(() => mock.on.mock.lastCall?.[2]());
+  const button = screen.getByRole('button', { name: /Publish refresh tick/ });
+  const previousTick = button.textContent;
+  act(() => button.click());
+  expect(button.textContent).not.toBe(previousTick);
   expect(screen.getByText('Refresh pending')).toBeTruthy();
   await act(async () => history.resolve({data: [{cpu_pct: 8}, {cpu_pct: 9}], error: null}));
   expect(screen.getByText('2 samples')).toBeTruthy();
   expect(screen.getByText('Refresh completed')).toBeTruthy();
+});
+
+it('lets initial historical history finish across poll and realtime ticks', async () => {
+  vi.useFakeTimers();
+  writePreference('refresh-seconds', 5);
+  render(<MonitorProvider session={session}><Probe /><TickProbe /></MonitorProvider>);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const history = deferred<{data: {cpu_pct: number}[]; error: null}>();
+  mock.rpc.mockReturnValueOnce(history.promise);
+  act(() => screen.getByText('Historical window').click());
+  const reads = mock.rpc.mock.calls.length;
+  const button = screen.getByRole('button', { name: /Publish refresh tick/ });
+  const previousTick = button.textContent;
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(button.textContent).not.toBe(previousTick);
+  act(() => mock.on.mock.lastCall?.[2]());
+  expect(mock.rpc).toHaveBeenCalledTimes(reads);
+  await act(async () => history.resolve({data: [{cpu_pct: 8}, {cpu_pct: 9}], error: null}));
+  expect(screen.getByText('2 samples')).toBeTruthy();
+  expect(screen.getByText('CPU 9')).toBeTruthy();
+});
+
+it('retries a failed initial historical request on the next poll', async () => {
+  vi.useFakeTimers();
+  writePreference('refresh-seconds', 5);
+  render(<MonitorProvider session={session}><Probe /></MonitorProvider>);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  mock.rpc.mockResolvedValueOnce({ data: null, error: { message: 'temporary history error' } });
+  act(() => screen.getByText('Historical window').click());
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.queryByText('CPU 9')).toBeNull();
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(screen.getByText('CPU 9')).toBeTruthy();
 });
 
 it('refreshes acknowledged alerts in a frozen history window', async () => {
