@@ -46,18 +46,20 @@ dt_reg_size() {
 }
 
 collect_dt_reservations() {
-    local root="$1" path name size count=0
+    local root="$1" path name size count=0 LC_ALL=C
     for path in "$root"/*; do
         [ -d "$path" ] || continue
         count=$((count + 1))
         [ "$count" -le 32 ] || break
         name=${path##*/}
         name=${name%%@*}
-        case "$name" in ''|*[!a-zA-Z0-9_.-]*) continue;; esac
+        case "$name" in ''|*[!a-zA-Z0-9_.,-]*) continue;; esac
         [ "${#name}" -le 64 ] || continue
         size=$(dt_reg_size "$path")
         diagnostic_uint "$size" || continue
         json_add_object ''
+        # Use the node order as an ID without exporting unit addresses.
+        json_add_string id "reservation-$count"
         json_add_string name "$name"
         json_add_int bytes "$size"
         [ ! -f "$path/no-map" ] || json_add_boolean no_map 1
@@ -164,7 +166,7 @@ collect_memory_diagnostics() {
     json_add_object sockets
     if [ -r "$proc/net/sockstat" ]; then
         while read -r name rest; do
-            case "$name" in sockets:|TCP:|UDP:|RAW:|FRAG:) ;; *) continue;; esac
+            case "$name" in sockets:|TCP:|UDP:|UDPLITE:|RAW:|FRAG:) ;; *) continue;; esac
             json_add_object "${name%:}"
             set -- $rest
             while [ "$#" -ge 2 ]; do

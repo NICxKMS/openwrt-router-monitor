@@ -166,6 +166,8 @@ class Collectors(unittest.TestCase):
         self.assertEqual(self.run_awk('memory-detail.awk', slabs, mode='slab', page_kb=4), '24576 2560 kmalloc-64\n')
         source = 'allocinfo - version: 2.0\n# header\n 4096 2 drivers/net/ethernet/qualcomm/ppe/ppe.c:123 func:ppe_probe [qcom_ppe]\n 20000 3 mm/foo.c:4 func:bar accurate:no\n 2048 1 mm/bar.c:10 func:baz\n 8192 4 mm/high.c:2 func:bar\n'
         self.assertEqual(self.run_awk('memory-detail.awk', source, mode='allocinfo'), '8192 4 mm/high.c:2\n4096 2 drivers/net/ethernet/qualcomm/ppe/ppe.c:123\n2048 1 mm/bar.c:10\n')
+        legacy = 'allocinfo - version: 1.0\n1024 1 mm/legacy.c:10 legacy_func\n'
+        self.assertEqual(self.run_awk('memory-detail.awk', legacy, mode='allocinfo'), '1024 1 mm/legacy.c:10\n')
 
     def test_logs_redact_and_group_and_burst_bound(self):
         data = ('Wed Nov 25 10:00:00 2026 daemon.err hostapd: failed peer 192.168.1.25 aa:bb:cc:dd:ee:ff password=hunter2\n' * 20)

@@ -115,7 +115,7 @@ export function MemoryBreakdown({ memory }: { memory: Row }) {
           {dtRam !== null && (
             <p>Device tree RAM {bytes(dtRam)}. {managed !== null && <>Difference from Linux-managed RAM {bytes(dtRam - managed * 1024)}.</>}</p>
           )}
-          {reservations.length ? <DataTable data={reservations} columns={[
+          {reservations.length ? <DataTable data={reservations.map((region, index) => ({ ...region, id: region.id ?? `legacy-reservation-${index}` }))} columns={[
             { key: 'name', label: 'Region' },
             { key: 'bytes', label: 'Size', render: bytes },
             { key: 'no_map', label: 'Mapping', render: (value, row) => row.reusable ? 'Reusable' : value ? 'Excluded from linear map' : 'Reserved' },

@@ -6,6 +6,11 @@ Version the web platform with semantic versions and the OpenWrt packages with `P
 
 Initial working platform: authenticated Worker ingestion, private PostgreSQL history, retention and alerts, responsive dashboard, and installable OpenWrt agent/LuCI packages. Actual JIDU6111 telemetry and logs have reached the hosted dashboard. See the acceptance checklist for remaining validation and optional collectors.
 
+### Deep monitoring review / OpenWrt agent 1.0.0-r7 and LuCI 1.0.0-r5
+
+- Accept both allocation profiling formats, retain vendor-named RAM reservations with opaque identifiers, and collect UDP-Lite socket counters.
+- Show per-core sampling cadence and freshness in the dashboard.
+
 ### Pre-merge corrections / OpenWrt 1.0.0-r3
 
 - Preserve client-name form values before disabling controls; prevent stale log/diagnostic exports.

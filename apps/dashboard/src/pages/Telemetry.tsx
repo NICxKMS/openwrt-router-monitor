@@ -1079,7 +1079,11 @@ function PerCore() {
   const cpu = object(object(latest?.detail).cpu);
   const cores = Object.entries(object(cpu.cores)).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
   return (
-    <Card title="CPU cores" description="Utilization over the agent's last monotonic sample interval.">
+    <Card
+      title="CPU cores"
+      description="Utilization between detail snapshots, normally collected every 5 minutes."
+      action={<CollectorLag uptimeKey="detail_uptime_s" label="Per-core CPU" />}
+    >
       {cores.length ? (
         <div className="core-list">
           {cores.map(([name, value]) => {

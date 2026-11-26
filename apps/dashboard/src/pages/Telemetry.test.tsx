@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Row } from '../lib/model';
 
@@ -285,27 +285,36 @@ describe('deep system telemetry', () => {
     fixture.monitor = {
       latest: { ...sample, detail: { ...sample.detail, memory: {
         accounting_kb: { total: 409600, free: 102400, counter_difference: 2048, measured_categories: 407552 },
-        reservations: [{ name: 'q6-region', bytes: 45088768, no_map: true }],
+        reservations: [
+          { id: 'reservation-1', name: 'q6-region', bytes: 45088768, no_map: true },
+          { id: 'reservation-2', name: 'q6-region', bytes: 1048576 },
+        ],
         allocinfo: [{ name: 'drivers/net/ethernet/qualcomm/ppe/ppe.c:123', allocated_bytes: 4096, allocations: '2' }],
       } } },
       history: [], zone: 'Asia/Kolkata',
     };
     render(<Memory />);
-    expect(screen.getByText('Counter difference')).toBeInTheDocument();
-    expect(screen.getByText('q6-region')).toBeInTheDocument();
-    expect(screen.getByText('drivers/net/ethernet/qualcomm/ppe/ppe.c:123')).toBeInTheDocument();
+    expect(screen.getByRole('row', { name: 'Counter difference 2 MiB' })).toBeInTheDocument();
+    expect(screen.getAllByText('q6-region')).toHaveLength(2);
+    expect(screen.getByRole('row', { name: /ppe\.c:123 4 KiB 2/ })).toBeInTheDocument();
   });
 
   it('shows per-core CPU states and task CPU independently of resident RAM', () => {
     fixture.monitor = {
       latest: { ...sample, detail: { ...sample.detail,
-        cpu: { ...sample.detail.cpu, modes: { user: 10, idle: 70, softirq: 20 }, core_modes: { cpu0: [10, 0, 0, 70, 0, 0, 20, 0, 0, 0] } },
+        cpu: { ...sample.detail.cpu, modes: { user: 10, idle: 70, softirq: 20 },
+          core_modes: { cpu0: [7, 0, 0, 73, 0, 0, 20, 0, 0, 0] } },
+        detail_uptime_s: 3500,
         processes_cpu: [{ name: 'ksoftirqd', pid: 9, cpu_pct: 12 }],
       } },
       history: [], zone: 'Asia/Kolkata',
     };
     render(<CPU />);
     expect(screen.getByText('CPU time by state')).toBeInTheDocument();
-    expect(screen.getByText('ksoftirqd')).toBeInTheDocument();
+    expect(screen.getByRole('row', { name: 'ksoftirqd 9 12%' })).toBeInTheDocument();
+    const userCells = within(screen.getByRole('row', { name: /^User / })).getAllByRole('cell');
+    expect(userCells.map(cell => cell.textContent)).toEqual(['User', '10%', '7%']);
+    expect(screen.getByRole('row', { name: 'Low priority — 0%' })).toBeInTheDocument();
+    expect(screen.getByTitle('Per-core CPU collector ran 100s before the latest core sample')).toBeInTheDocument();
   });
 });

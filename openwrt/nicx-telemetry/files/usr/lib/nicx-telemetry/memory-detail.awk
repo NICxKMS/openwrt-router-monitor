@@ -51,7 +51,7 @@ mode == "slab" && valid && page_kb > 0 && $1 ~ /^[A-Za-z0-9_.:-]+$/ && length($1
     $13 == "slabdata" && $15 ~ /^[0-9]+$/ && $15 > 0 {
     rank($15 * $6 * page_kb * 1024, sprintf("%.0f", $2 * $4), $1)
 }
-mode == "allocinfo" && NR == 1 { valid = ($1 == "allocinfo" && $4 ~ /^2\.[0-9]+$/) }
+mode == "allocinfo" && NR == 1 { valid = ($1 == "allocinfo" && $4 ~ /^[12]\.[0-9]+$/) }
 mode == "allocinfo" && valid && $1 ~ /^[0-9]+$/ && $1 > 0 && $2 ~ /^[0-9]+$/ &&
     $3 ~ /^[A-Za-z0-9_.\/+-]+:[0-9]+$/ && length($3) <= 160 && $0 !~ /[[:space:]]accurate:no([[:space:]]|$)/ {
     rank($1, $2, $3)
