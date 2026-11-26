@@ -48,6 +48,9 @@ export interface Sample {
   detail?: Row;
   interfaces?: Row[];
   sample_count?: number;
+  rx_delta_count?: number | null;
+  tx_delta_count?: number | null;
+  traffic_window_exact?: boolean;
 }
 export interface TimeRange { from: string; to: string; live: boolean; hours: number }
 
@@ -82,10 +85,82 @@ export function mib(kb: unknown, digits = 1): string {
   return n === null ? '—' : `${(n / 1024).toLocaleString(undefined, { maximumFractionDigits: digits })} MiB`;
 }
 
-export const rate = (delta: unknown, seconds: unknown): number | null =>
-  typeof delta === 'number' && Number.isFinite(delta) && typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
-    ? (delta * 8) / seconds / 1e6
-    : null;
+export const rate = (delta: unknown, seconds: unknown): number | null => {
+  const d = num(delta);
+  const s = num(seconds);
+  return d !== null && s !== null && s > 0 ? (d * 8) / s / 1e6 : null;
+};
+
+export function formatMbps(v: number | null): string {
+  if (v === null || !Number.isFinite(v)) return '—';
+  if (v === 0) return '0 Mbps';
+  if (v > 0 && v < 0.001) return '<1 Kbps';
+  if (v > 0 && v < 0.01) return fmt(v * 1000, ' Kbps', 0);
+  if (v < 1) return fmt(v, ' Mbps', 2);
+  return fmt(v, ' Mbps', 1);
+}
+
+type TrafficSample = Pick<Sample, 'rx_bytes_delta' | 'tx_bytes_delta' | 'rx_delta_count' | 'tx_delta_count' | 'sample_count'>;
+
+export function trafficDelta(sample: TrafficSample, direction: 'rx' | 'tx'): number | null {
+  const count = num(sample[`${direction}_delta_count`]);
+  const expected = num(sample.sample_count) ?? 1;
+  // Older rollups lack validity counts. Only one-sample buckets are unambiguous.
+  if ((count ?? (expected === 1 ? 1 : 0)) !== expected) return null;
+  return num(sample[`${direction}_bytes_delta`]);
+}
+
+export function sumTrafficBytes(samples: TrafficSample[]): { rx: number | null; tx: number | null; total: number | null } | null {
+  let rx = 0;
+  let tx = 0;
+  let rxComplete = true;
+  let txComplete = true;
+  let seen = false;
+  for (const sample of samples) {
+    const received = trafficDelta(sample, 'rx');
+    const transmitted = trafficDelta(sample, 'tx');
+    if (received === null) rxComplete = false;
+    else { rx += received; seen = true; }
+    if (transmitted === null) txComplete = false;
+    else { tx += transmitted; seen = true; }
+  }
+  if (!seen) return null;
+  return { rx: rxComplete ? rx : null, tx: txComplete ? tx : null, total: rxComplete && txComplete ? rx + tx : null };
+}
+
+export function sumWindowTraffic(samples: Sample[]) {
+  const totals = sumTrafficBytes(samples);
+  if (!totals) return null;
+  return {
+    ...totals,
+    approximate: samples.some((sample) => sample.traffic_window_exact !== true),
+  };
+}
+
+export function bucketCadenceLabel(samples: Sample[]): string {
+  if (!samples.length) return '';
+  const hasRollup = samples.some((s) => (num(s.sample_count) ?? 1) > 1);
+  if (!hasRollup && samples.length > 1) {
+    const times = samples
+      .map((s) => Date.parse(String(s.bucket || s.observed_at || s.received_at)))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    const diffs = times.slice(1).map((t, i) => (t - times[i]) / 1000).filter((d) => d > 0);
+    if (diffs.length) {
+      const median = diffs.sort((a, b) => a - b)[Math.floor(diffs.length / 2)];
+      return median < 55 ? `${Math.round(median)}s raw samples` : `${durationShort(median)} samples`;
+    }
+    return 'Raw samples';
+  }
+  const times = samples
+    .map((s) => Date.parse(String(s.bucket || s.observed_at || s.received_at)))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const diffs = times.slice(1).map((t, i) => (t - times[i]) / 1000).filter((d) => d > 0);
+  const median = diffs.length ? diffs.sort((a, b) => a - b)[Math.floor(diffs.length / 2)] : null;
+  if (median !== null && median >= 55) return `${durationShort(median)} buckets`;
+  return hasRollup ? 'Aggregated buckets' : 'Raw samples';
+}
 
 export function date(v: unknown, zone: string, full = false): string {
   if (typeof v !== 'string' || !Number.isFinite(Date.parse(v))) return '—';
@@ -101,6 +176,23 @@ export function compactAxisTime(value: unknown, zone: string, spanMs = 6 * 36000
   const time = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
   if (!Number.isFinite(time)) return '';
   const d = new Date(time);
+  if (spanMs <= 20 * 60000) {
+    return new Intl.DateTimeFormat('en-IN', {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(d);
+  }
+  if (spanMs > 14 * 86400000) {
+    return new Intl.DateTimeFormat('en-IN', {
+      timeZone: zone,
+      day: 'numeric',
+      month: 'short',
+      ...(spanMs > 365 * 86400000 ? { year: 'numeric' as const } : {}),
+    }).format(d);
+  }
   if (spanMs > 36 * 3600000) {
     return new Intl.DateTimeFormat('en-IN', {
       timeZone: zone,

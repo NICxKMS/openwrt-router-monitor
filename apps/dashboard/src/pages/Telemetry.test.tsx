@@ -56,6 +56,7 @@ vi.mock('../components/Chart', () => ({ default: () => null }));
 
 import { CPU, DNS, Memory, Network, Overview, WiFi } from './Telemetry';
 import { ActionProvider } from '../components/Actions';
+import { Interfaces } from '../components/Shared';
 
 const sample = {
   uptime_s: 3600,
@@ -249,6 +250,57 @@ describe('structured telemetry views', () => {
     rerender(<Network />);
     await waitFor(() => expect(screen.getAllByText('2026-01-30')).toHaveLength(4));
     expect(screen.getByText('124 GB used of 200 GB')).toBeInTheDocument();
+
+    fixture.bandwidthDaily[0].rx_bytes = 1_900_000_000;
+    fixture.monitor.tick = 1;
+    rerender(<Network />);
+    expect(await screen.findByText('125 GB used of 200 GB')).toBeInTheDocument();
+  });
+
+  it('separates speed and consumed traffic stats on Network without flashing quota loading on poll', async () => {
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    fixture.monitor = {
+      ...fixture.monitor,
+      device: { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200, billing_day: 1 } },
+      history: [
+        { ...sample, rx_bytes_delta: 5_242_880, tx_bytes_delta: 1_048_576, elapsed_s: 10 },
+        { ...sample, rx_bytes_delta: 5_242_880, tx_bytes_delta: 1_048_576, elapsed_s: 10 },
+      ],
+    };
+    fixture.bandwidthDaily = [{ device_id: 'dev-1', day: '2026-11-25', interface_name: 'eth0', role: 'wan', rx_bytes: 2_000_000_000, tx_bytes: 0 }];
+    const { rerender } = render(<Network />);
+    expect(await screen.findByText('2 GB used of 200 GB')).toBeInTheDocument();
+    expect(screen.getAllByText('12 MiB').length).toBeGreaterThan(0);
+    expect(screen.getByText('Approx. consumed in window')).toBeInTheDocument();
+    expect(screen.getByText('Approx. downloaded (↓)')).toBeInTheDocument();
+    expect(screen.getByText('Approx. uploaded (↑)')).toBeInTheDocument();
+    expect(screen.getByText('Internet speed (Rx & Tx)')).toBeInTheDocument();
+    expect(screen.getByText('Data consumed per interval')).toBeInTheDocument();
+
+    fixture.monitor = { ...fixture.monitor, tick: 1 };
+    rerender(<Network />);
+    expect(screen.queryByText('Loading billing-cycle quota usage…')).toBeNull();
+    expect(screen.getByText('2 GB used of 200 GB')).toBeInTheDocument();
+  });
+
+  it('shows a WAN-specific empty state when only LAN counters are reported', () => {
+    fixture.monitor.latest = { ...sample, interfaces: [{ name: 'br-lan', role: 'lan' }] };
+    render(<Interfaces wanOnly />);
+    expect(screen.getByText('No WAN uplink counters reported')).toBeInTheDocument();
+  });
+
+  it('loads daily traffic past one API page and keeps incomplete current-day totals unavailable', async () => {
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    fixture.monitor.range = {from: '2026-11-24T12:00:00Z', to: '2026-11-25T12:00:00Z', live: false, hours: 24};
+    fixture.bandwidthDaily = Array.from({ length: 1000 }, (_, index) => ({
+      device_id: 'dev-1', day: '2026-11-24', interface_name: `fixture-${index}`, role: 'wan', rx_bytes: 0, tx_bytes: 0,
+    }));
+    fixture.bandwidthDaily.push({
+      device_id: 'dev-1', day: '2026-11-25', interface_name: 'fixture-last', role: 'wan', rx_bytes: 1024, tx_bytes: null,
+    });
+    render(<Network />);
+    expect(await screen.findByText('fixture-last')).toBeInTheDocument();
+    expect(screen.getByText('↓ 1 KiB · ↑ — · incomplete data')).toBeInTheDocument();
   });
 
   it('hides the previous quota usage from the first render for another router', async () => {

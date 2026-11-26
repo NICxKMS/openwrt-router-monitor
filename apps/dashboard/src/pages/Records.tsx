@@ -26,7 +26,7 @@ import { ActionButton, ActionForm, ActionStatus, ActionSubmit, useAction } from 
 const severity = ['Emergency', 'Alert', 'Critical', 'Error', 'Warning', 'Notice', 'Info', 'Debug'];
 
 export function Logs() {
-  const { device, range, zone } = useMonitor();
+  const { device, range, tick, zone } = useMonitor();
   const [level, setLevel] = useState('7');
   const [service, setService] = useState('');
   const [search, setSearch] = useState('');
@@ -43,22 +43,26 @@ export function Logs() {
     setPagingRange(null);
   }, [device?.id, rangeIdentity, applied]);
 
-  const q = useQuery(() => {
-    let query = db!
-      .from('system_logs')
-      .select('*')
-      .eq('device_id', device!.id)
-      .gte('received_at', queryRange.from)
-      .lte('received_at', queryRange.to)
-      .lte('severity', Number(applied.level))
-      .order('received_at', { ascending: false })
-      .order('id', { ascending: false })
-      .limit(51);
-    if (applied.service) query = query.eq('service', applied.service);
-    if (applied.search) query = query.ilike('message', '%' + applied.search.replace(/[\\%_]/g, '\\$&') + '%');
-    if (cursor) query = query.or(`received_at.lt.${cursor.time},and(received_at.eq.${cursor.time},id.lt.${cursor.id})`);
-    return query;
-  }, [device?.id, rangeIdentity, queryRange, applied, cursor?.time, cursor?.id]);
+  const q = useQuery(
+    () => {
+      let query = db!
+        .from('system_logs')
+        .select('id,device_id,boot_id,seq,observed_at,received_at,uptime_s,severity,service,message,count,first_at,last_at')
+        .eq('device_id', device!.id)
+        .gte('received_at', queryRange.from)
+        .lte('received_at', queryRange.to)
+        .lte('severity', Number(applied.level))
+        .order('received_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(51);
+      if (applied.service) query = query.eq('service', applied.service);
+      if (applied.search) query = query.ilike('message', '%' + applied.search.replace(/[\\%_]/g, '\\$&') + '%');
+      if (cursor) query = query.or(`received_at.lt.${cursor.time},and(received_at.eq.${cursor.time},id.lt.${cursor.id})`);
+      return query;
+    },
+    [device?.id, rangeIdentity, applied, cursor?.time, cursor?.id],
+    [range.live && !pagingRange ? tick : 0, queryRange.from, queryRange.to],
+  );
 
   const data = (q.data || []).slice(0, 50) as Row[];
   const hasFilters = applied.level !== '7' || applied.service !== '' || applied.search !== '';
@@ -261,11 +265,13 @@ export function Logs() {
 }
 
 export function Diagnostics() {
-  const { device, zone, range } = useMonitor();
+  const { device, zone, range, tick } = useMonitor();
   const [page, setPage] = useState(0);
   const [revision, setRevision] = useState(0);
   const [links, setLinks] = useState<Record<string, { url: string; expiresAt: number }>>({});
   const [pagingRange, setPagingRange] = useState<TimeRange | null>(null);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const [openPkgIds, setOpenPkgIds] = useState<Set<string>>(() => new Set());
   const queryRange = pagingRange || range;
   const rangeIdentity = timeRangeKey(range);
 
@@ -273,20 +279,33 @@ export function Diagnostics() {
     setPage(0);
     setPagingRange(null);
     setLinks({});
+    setOpenIds(new Set());
+    setOpenPkgIds(new Set());
   }, [device?.id, rangeIdentity]);
+
+  const toggleOpen = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string, isOpen: boolean) => {
+    setter((prev) => {
+      if (prev.has(id) === isOpen) return prev;
+      const next = new Set(prev);
+      if (isOpen) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
 
   const q = useQuery(
     () =>
       db!
         .from('diagnostics')
-        .select('*')
+        .select('id,device_id,boot_id,created_at,object_path,payload')
         .eq('device_id', device!.id)
         .gte('created_at', queryRange.from)
         .lte('created_at', queryRange.to)
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .range(page * 20, page * 20 + 20),
-    [device?.id, rangeIdentity, page, queryRange, revision],
+    [device?.id, rangeIdentity, page],
+    [revision, range.live && !pagingRange ? tick : 0, queryRange.from, queryRange.to],
   );
 
   return (
@@ -302,7 +321,7 @@ export function Diagnostics() {
       >
         <p className="record-state">
           Records last checked {date(q.refreshedAt, zone, true)}
-          {q.loading ? ' · checking cloud records…' : ''}
+          {q.loading || q.refreshing ? ' · checking cloud records…' : ''}
         </p>
         <QueryState
           {...q}
@@ -320,7 +339,12 @@ export function Diagnostics() {
             );
 
             return (
-              <details className="record" key={id}>
+              <details
+                className="record"
+                key={id}
+                open={openIds.has(id)}
+                onToggle={(e) => toggleOpen(setOpenIds, id, e.currentTarget.open)}
+              >
                 <summary>
                   <span>
                     {date(row.created_at, zone, true)} <span className="badge good">Received in cloud</span>{' '}
@@ -340,7 +364,14 @@ export function Diagnostics() {
                 )}
                 <Fields value={otherPayload} />
                 {packagesText && (
-                  <details style={{ marginTop: 10 }}>
+                  <details
+                    style={{ marginTop: 10 }}
+                    open={openPkgIds.has(id)}
+                    onToggle={(e) => {
+                      e.stopPropagation();
+                      toggleOpen(setOpenPkgIds, id, e.currentTarget.open);
+                    }}
+                  >
                     <summary style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 13 }}>
                       Installed packages ({packagesText.split('\n').filter(Boolean).length} lines)
                     </summary>
@@ -447,22 +478,26 @@ function PreparedArchiveLink({ id, link, zone }: { id: string; link: { url: stri
 }
 
 export function Alerts() {
-  const { device, tick, refresh, zone } = useMonitor();
+  const { device, tick, refreshAlerts, zone } = useMonitor();
   const [status, setStatus] = useState('open');
   const [page, setPage] = useState(0);
 
   useEffect(() => setPage(0), [device?.id]);
 
-  const q = useQuery(() => {
-    let query = db!
-      .from('alerts')
-      .select('*')
-      .eq('device_id', device!.id)
-      .order('opened_at', { ascending: false })
-      .range(page * 50, page * 50 + 50);
-    if (status === 'open') query = query.is('resolved_at', null);
-    return query;
-  }, [device?.id, tick, status, page]);
+  const q = useQuery(
+    () => {
+      let query = db!
+        .from('alerts')
+        .select('id,device_id,rule_key,severity,message,opened_at,resolved_at,acknowledged_at')
+        .eq('device_id', device!.id)
+        .order('opened_at', { ascending: false })
+        .range(page * 50, page * 50 + 50);
+      if (status === 'open') query = query.is('resolved_at', null);
+      return query;
+    },
+    [device?.id, status, page],
+    [tick],
+  );
 
   return (
     <Card
@@ -543,7 +578,7 @@ export function Alerts() {
                     onAction={async (action) => {
                       await ownerApi(`/api/v1/alerts/${v}/ack`, undefined, 'POST', action.signal);
                       action.signal.throwIfAborted();
-                      refresh();
+                      refreshAlerts();
                     }}
                   >
                     Acknowledge
@@ -568,15 +603,25 @@ export function Alerts() {
 }
 
 function AlertRules() {
-  const { device, tick, refresh } = useMonitor();
+  const { device, refresh } = useMonitor();
   const [metric, setMetric] = useState('cpu_pct');
   const [threshold, setThreshold] = useState('90');
   const [operator, setOperator] = useState('gt');
   const [sustain, setSustain] = useState('120');
   const [hysteresis, setHysteresis] = useState('5');
   const [cooldown, setCooldown] = useState('900');
+  const [ruleRevision, setRuleRevision] = useState(0);
 
-  const q = useQuery(() => db!.from('alert_rules').select('*').eq('device_id', device!.id).order('id'), [device?.id, tick]);
+  const q = useQuery(
+    () =>
+      db!
+        .from('alert_rules')
+        .select('id,device_id,metric,operator,threshold,sustain_s,hysteresis,cooldown_s,enabled')
+        .eq('device_id', device!.id)
+        .order('id'),
+    [device?.id],
+    [ruleRevision],
+  );
   const metricInfo = ALERT_METRICS[metric];
 
   const handleMetricChange = (nextMetric: string) => {
@@ -638,6 +683,7 @@ function AlertRules() {
                   onAction={async () => {
                     const result = await db!.from('alert_rules').update({ enabled: !value }).eq('id', row.id);
                     if (result.error) throw result.error;
+                    setRuleRevision((r) => r + 1);
                     refresh();
                   }}
                 >
@@ -656,6 +702,7 @@ function AlertRules() {
                   onAction={async () => {
                     const result = await db!.from('alert_rules').delete().eq('id', value);
                     if (result.error) throw result.error;
+                    setRuleRevision((r) => r + 1);
                     refresh();
                   }}
                 >
@@ -683,6 +730,7 @@ function AlertRules() {
             enabled: true,
           });
           if (result.error) throw result.error;
+          setRuleRevision((r) => r + 1);
           refresh();
         }}
       >
@@ -738,17 +786,23 @@ interface Comparison {
 }
 
 export function Firmware() {
-  const { device, tick, zone } = useMonitor();
+  const { device, latest, zone } = useMonitor();
   const [a, setA] = useState('');
   const [b, setB] = useState('');
   const [start, setStart] = useState('600');
   const [end, setEnd] = useState('3600');
-  const [chartMetric, setChartMetric] = useState<'cpu_pct' | 'mem_available_kb' | 'temp_c'>('cpu_pct');
+  const [chartMetric, setChartMetric] = useState<'cpu_pct' | 'mem_available_kb' | 'temp_c' | 'rx_mbps'>('cpu_pct');
   const [comparison, setComparison] = useState<Comparison | null>(null);
 
   const q = useQuery(
-    () => db!.from('boot_sessions').select('*').eq('device_id', device!.id).order('first_seen_at', { ascending: false }).limit(30),
-    [device?.id, tick],
+    () =>
+      db!
+        .from('boot_sessions')
+        .select('device_id,boot_id,first_seen_at,last_seen_at,inventory')
+        .eq('device_id', device!.id)
+        .order('first_seen_at', { ascending: false })
+        .limit(30),
+    [device?.id, latest?.boot_id],
   );
 
   useEffect(() => {
@@ -874,12 +928,13 @@ export function Firmware() {
                   ['cpu_pct', 'CPU %'],
                   ['mem_available_kb', 'Available RAM (MiB)'],
                   ['temp_c', 'Temperature (°C)'],
+                  ['rx_mbps', 'WAN Rx (Mbps)'],
                 ].map(([key, label]) => (
                   <button
                     type="button"
                     key={key}
                     aria-pressed={chartMetric === key}
-                    onClick={() => setChartMetric(key as 'cpu_pct' | 'mem_available_kb' | 'temp_c')}
+                    onClick={() => setChartMetric(key as 'cpu_pct' | 'mem_available_kb' | 'temp_c' | 'rx_mbps')}
                   >
                     {label}
                   </button>

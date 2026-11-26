@@ -216,6 +216,7 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     }
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
   });
+  let diagnosticsRefreshed = false;
   await page.route('https://fixture.supabase.co/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -243,7 +244,7 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     else if (path.endsWith('/client_names')) body = [{ device_id: device, client_id: 'c_living_laptop', name: 'Living Room Laptop' }];
     else if (path.endsWith('/bandwidth_daily')) body = [{ device_id: device, day: now.slice(0, 10), interface_name: 'eth0', role: 'wan', rx_bytes: 58_000_000_000, tx_bytes: 12_000_000_000, coverage_s: 82800 }];
     else if (path.endsWith('/system_logs')) body = [{ id: 'l1', device_id: device, boot_id: boot, seq: 10, received_at: iso(5), uptime_s: 86100, severity: 4, service: 'dnsmasq', message: 'nameserver 1.1.1.1 resumed normal response', count: 3, first_at: iso(8), last_at: iso(5) }];
-    else if (path.endsWith('/diagnostics')) body = [{ id: 'd1', device_id: device, boot_id: boot, created_at: iso(30), object_path: null, payload: { request_id: 'req-1234', memory: { mem_available_kb: 176400 }, packages: 'base-files - 1.0\ndnsmasq - 2.90\nnicx-telemetry - 1.0.0-r3' } }];
+    else if (path.endsWith('/diagnostics')) body = [{ id: 'd1', device_id: device, boot_id: boot, created_at: iso(30), object_path: null, payload: { request_id: 'req-1234', memory: { mem_available_kb: 176400 }, packages: diagnosticsRefreshed ? 'refreshed-package - 2' : 'base-files - 1.0\ndnsmasq - 2.90\nnicx-telemetry - 1.0.0-r3' } }];
     await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Content-Range': '0-0/1' }, body: JSON.stringify(body) });
   });
   await page.routeWebSocket('wss://fixture.supabase.co/**', (socket) => socket.close());
@@ -291,7 +292,8 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
   await navigate(page, 'Network', mobile);
   await page.getByRole('button', { name: 'Previous time window' }).click();
   await expect(page.getByRole('button', { name: 'Return to Live' })).toBeVisible();
-  await expectChart(page, /^Internet throughput/);
+  await expectChart(page, /^Internet speed/);
+  await expectChart(page, /^Data consumed per interval/);
   await page.screenshot({ path: `test-results/${testInfo.project.name}-light-network-history.png`, fullPage: true });
   await page.getByRole('button', { name: 'Return to Live' }).click();
 
@@ -315,6 +317,11 @@ test('rich telemetry walkthrough across charts, wifi, logs, alerts, and light th
     await expect(page.getByText('Snapshot only')).toBeVisible();
     await page.locator('.record summary').first().click();
     await page.getByText(/Installed packages/).click();
+    await expect(page.locator('.pkg-list')).toBeVisible();
+    diagnosticsRefreshed = true;
+    await page.getByRole('button', { name: 'Refresh observations' }).click();
+    await expect(page.getByText('refreshed-package - 2')).toBeVisible();
+    await expect(page.locator('.pkg-list')).toBeVisible();
     await page.screenshot({ path: `test-results/desktop-rich-diagnostics.png`, fullPage: true });
 
     await page.getByRole('link', { name: 'Internet & ISP', exact: true }).click();
