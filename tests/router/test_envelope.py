@@ -120,12 +120,39 @@ printf '%s\n' "$ud"
         (disabled/'reg').write_bytes(bytes.fromhex('000000004f0000000000000000100000'))
         (disabled/'status').write_bytes(b'disabled\0')
         result = json.loads(self.shell('json_init; collect_device_tree_memory "$STATE/devicetree"; json_dump'))
+        ids = [entry.pop('id') for entry in result['reservations']]
+        self.assertEqual(len(set(ids)), 2)
+        for key in ids:
+            self.assertRegex(key, r'^reservation-[a-f0-9]{16}$')
+            self.assertNotIn('4b000000', key)
+            self.assertNotIn('4e000000', key)
         self.assertEqual(result, {
             'dt_ram_bytes': 512*1024*1024,
             'reservations': [
-                {'id': 'reservation-1', 'name': 'qcom,q6', 'bytes': 43*1024*1024, 'no_map': True},
-                {'id': 'reservation-2', 'name': 'qcom,q6', 'bytes': 1024*1024},
+                {'name': 'qcom,q6', 'bytes': 43*1024*1024, 'no_map': True},
+                {'name': 'qcom,q6', 'bytes': 1024*1024},
             ],
+        })
+
+        earlier = region.parent/'a-new-node@42000000'
+        earlier.mkdir()
+        (earlier/'reg').write_bytes(bytes.fromhex('00000000420000000000000000100000'))
+        result = json.loads(self.shell('json_init; collect_device_tree_memory "$STATE/devicetree"; json_dump'))
+        self.assertEqual([entry['id'] for entry in result['reservations'][1:]], ids)
+
+    def test_cpu_frequency_and_softirqs_use_fixture_roots(self):
+        proc = self.state/'fixture-proc'
+        proc.mkdir()
+        (proc/'softirqs').write_text('CPU0 CPU1\nNET_RX: 2 11\nTIMER: 0 0\n')
+        policy = self.state/'fixture-sys/devices/system/cpu/cpufreq/policy7'
+        policy.mkdir(parents=True)
+        (policy/'scaling_cur_freq').write_text('1200000\n')
+        (policy/'scaling_min_freq').write_text('600000\n')
+        (policy/'scaling_max_freq').write_text('unavailable\n')
+        detail = json.loads(self.shell('json_init; collect_cpu_diagnostics "$STATE/fixture-proc" "$STATE/fixture-sys"; json_dump'))
+        self.assertEqual(detail, {
+            'cpu_frequency': [{'policy': 'policy7', 'scaling_cur_freq': 1200000, 'scaling_min_freq': 600000}],
+            'cpu_softirq': {'NET_RX': '13', 'TIMER': '0'},
         })
 
     def test_sockstat_keeps_udplite_counters(self):

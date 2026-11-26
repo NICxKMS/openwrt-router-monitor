@@ -147,7 +147,7 @@ collect_detail() {
     json_close_object
     collect_memory_diagnostics /proc /sys
     json_close_object
-    collect_cpu_diagnostics
+    collect_cpu_diagnostics /proc /sys
     json_add_array thermal
     count=0
     for path in /sys/class/thermal/thermal_zone*/temp;do

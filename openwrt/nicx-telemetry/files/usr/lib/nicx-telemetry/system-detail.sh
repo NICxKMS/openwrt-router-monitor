@@ -46,20 +46,22 @@ dt_reg_size() {
 }
 
 collect_dt_reservations() {
-    local root="$1" path name size count=0 LC_ALL=C
+    local root="$1" path node name size digest count=0 LC_ALL=C
     for path in "$root"/*; do
         [ -d "$path" ] || continue
         count=$((count + 1))
         [ "$count" -le 32 ] || break
-        name=${path##*/}
-        name=${name%%@*}
+        node=${path##*/}
+        name=${node%%@*}
         case "$name" in ''|*[!a-zA-Z0-9_.,-]*) continue;; esac
         [ "${#name}" -le 64 ] || continue
         size=$(dt_reg_size "$path")
         diagnostic_uint "$size" || continue
         json_add_object ''
-        # Use the node order as an ID without exporting unit addresses.
-        json_add_string id "reservation-$count"
+        # Hash the full node name so duplicate labels and list changes do not move IDs.
+        digest=$(printf '%s' "$node" | sha256sum)
+        digest=${digest%% *}
+        [ "${#digest}" -ne 64 ] || json_add_string id "reservation-$(printf '%.16s' "$digest")"
         json_add_string name "$name"
         json_add_int bytes "$size"
         [ ! -f "$path/no-map" ] || json_add_boolean no_map 1
@@ -182,9 +184,9 @@ collect_memory_diagnostics() {
 }
 
 collect_cpu_diagnostics() {
-    local path name field value count=0
+    local proc="$1" sys="$2" path name field value count=0
     json_add_array cpu_frequency
-    for path in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
+    for path in "$sys"/devices/system/cpu/cpufreq/policy[0-9]*; do
         [ -d "$path" ] || continue
         count=$((count + 1)); [ "$count" -le 16 ] || break
         json_add_object ''
@@ -198,12 +200,12 @@ collect_cpu_diagnostics() {
     done
     json_close_array
     json_add_object cpu_softirq
-    if [ -r /proc/softirqs ]; then
+    if [ -r "$proc/softirqs" ]; then
         awk 'NR<=20 && $1 ~ /^[A-Z_]+:$/ {
             total=0
             for(i=2;i<=NF;i++) total+=$i
             printf "%s %.0f\n", substr($1,1,length($1)-1),total
-        }' /proc/softirqs > "$STATE/softirq.input"
+        }' "$proc/softirqs" > "$STATE/softirq.input"
         while read -r name value; do json_add_string "$name" "$value"; done < "$STATE/softirq.input"
         rm -f "$STATE/softirq.input"
     fi
