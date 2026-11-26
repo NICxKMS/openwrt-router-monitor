@@ -98,10 +98,11 @@ export function HistoryChart({
     if (activeMetric === 'cpu_pct') {
       const s = summarizeValues(history.map((d) => num(d.cpu_pct)));
       const peak = summarizeValues(history.map((d) => num(d.cpu_max) ?? num(d.cpu_pct)));
+      const minimum = summarizeValues(history.map((d) => num(d.cpu_min) ?? num(d.cpu_pct)));
       if (s) {
         summaryContent = (
           <>
-            <span>Min <strong>{fmt(s.min, '%')}</strong></span>
+            <span>Min <strong>{fmt(minimum?.min ?? s.min, '%')}</strong></span>
             <span>Avg <strong>{fmt(s.avg, '%')}</strong></span>
             <span>Max <strong>{fmt(peak?.max ?? s.max, '%')}</strong></span>
             {s.latest !== null && <span>Latest <strong>{fmt(s.latest, '%')}</strong></span>}
@@ -166,7 +167,7 @@ export function HistoryChart({
               </>
             )}
             {trafficTotals && (
-              <span>Window volume <strong>{bytes(trafficTotals.total)}</strong></span>
+              <span>Window volume <strong>{bytes(trafficTotals.total)}</strong>{trafficTotals.total === null && ' (incomplete data)'}</span>
             )}
           </>
         );
@@ -176,7 +177,7 @@ export function HistoryChart({
         <>
           <span>Downloaded (↓) <strong>{bytes(trafficTotals.rx)}</strong></span>
           <span>Uploaded (↑) <strong>{bytes(trafficTotals.tx)}</strong></span>
-          <span>Combined total <strong>{bytes(trafficTotals.total)}</strong></span>
+          <span>Combined total <strong>{bytes(trafficTotals.total)}</strong>{trafficTotals.total === null && ' (incomplete data)'}</span>
           {cadence && <span>Resolution <strong>{cadence}</strong></span>}
         </>
       );

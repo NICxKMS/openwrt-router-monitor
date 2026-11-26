@@ -96,23 +96,22 @@ export function formatMbps(v: number | null): string {
   return fmt(v, ' Mbps', 1);
 }
 
-export function sumTrafficBytes(samples: Sample[]): { rx: number; tx: number; total: number } | null {
+export function sumTrafficBytes(samples: Sample[]): { rx: number | null; tx: number | null; total: number | null } | null {
   let rx = 0;
   let tx = 0;
+  let rxComplete = true;
+  let txComplete = true;
   let seen = false;
-  for (const s of samples) {
-    const r = num(s.rx_bytes_delta);
-    const t = num(s.tx_bytes_delta);
-    if (r !== null) {
-      rx += r;
-      seen = true;
-    }
-    if (t !== null) {
-      tx += t;
-      seen = true;
-    }
+  for (const sample of samples) {
+    const received = num(sample.rx_bytes_delta);
+    const transmitted = num(sample.tx_bytes_delta);
+    if (received === null) rxComplete = false;
+    else { rx += received; seen = true; }
+    if (transmitted === null) txComplete = false;
+    else { tx += transmitted; seen = true; }
   }
-  return seen ? { rx, tx, total: rx + tx } : null;
+  if (!seen) return null;
+  return { rx: rxComplete ? rx : null, tx: txComplete ? tx : null, total: rxComplete && txComplete ? rx + tx : null };
 }
 
 export function bucketCadenceLabel(samples: Sample[]): string {

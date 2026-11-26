@@ -117,7 +117,7 @@ export default function Chart({
   const zoomScopeKey = `${device?.id || 'none'}:${range ? timeRangeKey(range) : 'default'}:${chartGroup}`;
   const fullSpanRef = useRef<number>(6 * 3600000);
   const zoneRef = useRef(zone);
-  zoneRef.current = zone;
+  useEffect(() => { zoneRef.current = zone; }, [zone]);
 
   useEffect(() => {
     const host = element.current;
@@ -139,7 +139,7 @@ export default function Chart({
           chart.setOption({
             xAxis: {
               axisLabel: {
-                formatter: (v: number) => compactAxisTime(v, zoneRef.current, visibleSpan),
+                formatter: (v: number) => compare ? durationShort(v) : compactAxisTime(v, zoneRef.current, visibleSpan),
               },
             },
           });
@@ -161,7 +161,7 @@ export default function Chart({
         ],
         xAxis: {
           axisLabel: {
-            formatter: (v: number) => compactAxisTime(v, zoneRef.current, fullSpanRef.current),
+            formatter: (v: number) => compare ? durationShort(v) : compactAxisTime(v, zoneRef.current, fullSpanRef.current),
           },
         },
       });
@@ -172,7 +172,7 @@ export default function Chart({
       instance.current?.dispose();
       instance.current = null;
     };
-  }, [chartGroup, zoomScopeKey]);
+  }, [chartGroup, zoomScopeKey, !!compare, onZoomStateChange]);
 
   useEffect(() => {
     const chart = instance.current;
@@ -226,14 +226,14 @@ export default function Chart({
         return {
           name,
           type: 'line' as const,
-          showSymbol: validCount <= 12,
+          showSymbol: true,
           symbol: 'circle',
           symbolSize: 5,
           connectNulls: false,
           lineStyle: { width: opts.width ?? (opts.dashed ? 1.25 : 2), type: opts.dashed ? ('dashed' as const) : ('solid' as const) },
           itemStyle: { color },
           ...(opts.area ? { areaStyle: { color: palette.areaFill } } : {}),
-          data: pts,
+          data: pts.map((point) => !Array.isArray(point) && validCount > 12 && !point.showSymbol ? { ...point, symbolSize: 0 } : point),
         };
       };
 

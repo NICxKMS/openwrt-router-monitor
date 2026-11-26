@@ -47,3 +47,23 @@ it('aggregates daily_traffic rows per UTC day into a dual bar chart', () => {
   expect(option.series[0].data).toEqual([150]);
   expect(option.series[1].data).toEqual([30]);
 });
+
+it('keeps an isolated point visible in a dense series', () => {
+  const data = Array.from({ length: 16 }, (_, index) => ({
+    received_at: new Date(Date.UTC(2026, 0, 1, 0, 0, index * 10)).toISOString(),
+    cpu_pct: index === 13 || index === 15 ? null : 20,
+    mem_available_kb: null, temp_c: null, rx_bytes_delta: null, tx_bytes_delta: null, elapsed_s: null,
+  }));
+  render(<Chart data={data} metric="cpu_pct" />);
+  const series = mock.setOption.mock.lastCall?.[0].series[0];
+  expect(series.showSymbol).toBe(true);
+  expect(series.data[0].symbolSize).toBe(0);
+  expect(series.data[14].symbolSize).toBe(5);
+});
+
+it('keeps uptime labels after zooming a comparison', () => {
+  render(<Chart data={[]} metric="cpu_pct" compare={{baseline: [], comparison: [], metric: 'cpu_pct'}} />);
+  mock.getOption.mockReturnValueOnce({dataZoom: [{start: 12, end: 84}]});
+  mock.on.mock.calls.find(([name]) => name === 'datazoom')?.[1]();
+  expect(mock.setOption.mock.lastCall?.[0].xAxis.axisLabel.formatter(3600)).toBe('1h');
+});

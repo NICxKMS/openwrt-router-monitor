@@ -681,7 +681,7 @@ export function Network() {
         <Stat
           label="Consumed in window"
           value={windowTraffic ? bytes(windowTraffic.total) : '—'}
-          sub={windowTraffic ? `↓ ${bytes(windowTraffic.rx)} · ↑ ${bytes(windowTraffic.tx)}` : 'No WAN deltas in window'}
+          sub={windowTraffic ? `↓ ${bytes(windowTraffic.rx)} · ↑ ${bytes(windowTraffic.tx)}${windowTraffic.total === null ? ' · incomplete data' : ''}` : 'No WAN deltas in window'}
         />
         {quotaGb > 0 ? (
           <Stat
@@ -693,8 +693,8 @@ export function Network() {
         ) : (
           <Stat
             label="Today UTC consumed"
-            value={todayBytes.seen ? bytes(todayBytes.rx + todayBytes.tx) : String(uplinks.length || '—')}
-            sub={todayBytes.seen ? `↓ ${bytes(todayBytes.rx)} · ↑ ${bytes(todayBytes.tx)}` : uplinks.map((u) => String(u.name)).join(', ') || 'No WAN uplink detected'}
+            value={todayBytes.seen ? bytes(todayBytes.rx + todayBytes.tx) : '—'}
+            sub={todayBytes.seen ? `↓ ${bytes(todayBytes.rx)} · ↑ ${bytes(todayBytes.tx)}` : 'Today is outside the selected range or usage is unavailable'}
           />
         )}
       </div>
@@ -713,6 +713,7 @@ export function Network() {
             <strong>{fmt(cycleBytes === null ? null : cycleBytes / 1e9, ' GB', 2)} used of {quotaGb} GB</strong>
             <span className="small muted">Observed coverage only · not ISP billing meter</span>
           </div>
+          {cycleQuery.refreshError && <p className="notice danger" role="alert">{cycleQuery.refreshError}</p>}
           {cycleQuery.loading ? (
             <p className="small muted" role="status">
               Loading billing-cycle quota usage…

@@ -146,7 +146,7 @@ export function Settings() {
   async function mutate(endpoint: string, body?: unknown, method = 'POST', signal?: AbortSignal) {
     const result = await ownerApi(endpoint, body, method, signal);
     signal?.throwIfAborted();
-    refresh();
+    refresh(true);
     return result;
   }
 

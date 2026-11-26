@@ -21,7 +21,7 @@ interface Store {
   refreshSeconds: number;
   setRefreshSeconds: (n: number) => void;
   tick: number;
-  refresh: () => void;
+  refresh: (forceDevices?: boolean) => void;
   manualRefresh: () => Promise<void>;
   lastRefreshAt: string | null;
   error: string;
@@ -96,7 +96,10 @@ export function MonitorProvider({ session, children }: { session: Session; child
   }, []);
 
   const registry = useMemo(() => ({ epoch: manualEpoch, track }), [manualEpoch, track]);
-  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const refresh = useCallback((forceDevices = false) => {
+    if (forceDevices) loadedDevicesEpochRef.current = -1;
+    setTick((t) => t + 1);
+  }, []);
   const manualRefresh = useCallback(
     () =>
       new Promise<void>((resolve, reject) => {
@@ -391,7 +394,7 @@ export function useQuery<T>(
   const blockingError = matchingError && !matchingError.background ? matchingError.message : '';
   const refreshError = matchingError && matchingError.background ? matchingError.message : '';
   const scopeAtEffectRef = useRef(isCurrent);
-  scopeAtEffectRef.current = isCurrent;
+  useEffect(() => { scopeAtEffectRef.current = isCurrent; });
   const allDeps = [...scopeDeps, ...refreshDeps, registry?.epoch];
 
   useEffect(() => {

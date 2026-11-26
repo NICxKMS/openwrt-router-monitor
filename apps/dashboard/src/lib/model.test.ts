@@ -66,6 +66,8 @@ describe('honest measurement formatting', () => {
     expect(formatMbps(0.42)).toBe('0.42 Mbps');
     expect(formatMbps(2)).toBe('2 Mbps');
     expect(sumTrafficBytes([{ rx_bytes_delta: null, tx_bytes_delta: null } as Sample])).toBeNull();
+    expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: null } as Sample])).toEqual({ rx: 300, tx: null, total: null });
+    expect(sumTrafficBytes([{ rx_bytes_delta: 0, tx_bytes_delta: 0 } as Sample])).toEqual({ rx: 0, tx: 0, total: 0 });
     expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: 100 } as Sample])).toEqual({ rx: 300, tx: 100, total: 400 });
   });
 });
