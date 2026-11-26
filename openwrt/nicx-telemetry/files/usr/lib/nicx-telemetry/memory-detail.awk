@@ -24,7 +24,7 @@ mode == "reg" {
             size = size * 16 + index("0123456789abcdef", substr($0, i, 1)) - 1
         total += size
     }
-    if (total < 2^53) printf "%.0f\n", total
+    if (total < 9007199254740992) printf "%.0f\n", total
 }
 mode == "zone" && $1 == "Node" && $3 == "zone" {
     sub(/,$/, "", $2)
@@ -53,7 +53,7 @@ mode == "slab" && valid && page_kb > 0 && $1 ~ /^[A-Za-z0-9_.:-]+$/ && length($1
 }
 mode == "allocinfo" && NR == 1 { valid = ($1 == "allocinfo" && $4 ~ /^2\.[0-9]+$/) }
 mode == "allocinfo" && valid && $1 ~ /^[0-9]+$/ && $1 > 0 && $2 ~ /^[0-9]+$/ &&
-    $3 ~ /^[A-Za-z0-9_./+-]+:[0-9]+$/ && length($3) <= 160 && $0 !~ /[[:space:]]accurate:no([[:space:]]|$)/ {
+    $3 ~ /^[A-Za-z0-9_.\/+-]+:[0-9]+$/ && length($3) <= 160 && $0 !~ /[[:space:]]accurate:no([[:space:]]|$)/ {
     rank($1, $2, $3)
 }
 END {
