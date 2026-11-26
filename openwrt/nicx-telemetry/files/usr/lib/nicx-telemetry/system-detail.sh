@@ -46,7 +46,8 @@ dt_reg_size() {
 }
 
 collect_dt_reservations() {
-    local root="$1" path node name size digest count=0 LC_ALL=C
+    local root="$1" path node name size digest salt count=0 LC_ALL=C
+    salt=$(load_privacy_salt) || salt=
     for path in "$root"/*; do
         [ -d "$path" ] || continue
         count=$((count + 1))
@@ -58,10 +59,12 @@ collect_dt_reservations() {
         size=$(dt_reg_size "$path")
         diagnostic_uint "$size" || continue
         json_add_object ''
-        # Hash the full node name so duplicate labels and list changes do not move IDs.
-        digest=$(printf '%s' "$node" | sha256sum)
-        digest=${digest%% *}
-        [ "${#digest}" -ne 64 ] || json_add_string id "reservation-$(printf '%.16s' "$digest")"
+        # A device-local secret makes duplicate names distinct without exposing unit addresses.
+        if [ -n "$salt" ]; then
+            digest=$(printf '%s:reservation:%s:%s' "$salt" "$node" "$salt" | sha256sum)
+            digest=${digest%% *}
+            [ "${#digest}" -ne 64 ] || json_add_string id "reservation-$(printf '%.16s' "$digest")"
+        fi
         json_add_string name "$name"
         json_add_int bytes "$size"
         [ ! -f "$path/no-map" ] || json_add_boolean no_map 1
@@ -169,7 +172,7 @@ collect_memory_diagnostics() {
     if [ -r "$proc/net/sockstat" ]; then
         while read -r name rest; do
             case "$name" in sockets:|TCP:|UDP:|UDPLITE:|RAW:|FRAG:) ;; *) continue;; esac
-            json_add_object "${name%:}"
+            [ "$name" = sockets: ] || json_add_object "${name%:}"
             set -- $rest
             while [ "$#" -ge 2 ]; do
                 field="$1"; value="$2"; shift 2
@@ -177,7 +180,7 @@ collect_memory_diagnostics() {
                     diagnostic_uint "$value" && json_add_int "$field" "$value";;
                 esac
             done
-            json_close_object
+            [ "$name" = sockets: ] || json_close_object
         done < "$proc/net/sockstat"
     fi
     json_close_object

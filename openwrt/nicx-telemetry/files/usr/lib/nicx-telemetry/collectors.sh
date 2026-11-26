@@ -223,20 +223,15 @@ collect_inventory() {
     unset board value
 }
 collect_wifi() {
+    local privacy_salt
     command -v iw >/dev/null || { echo '{"wifi":{"radios":[],"available":false}}' > "$STATE/wifi.new";mv "$STATE/wifi.new" "$STATE/wifi.json";: > "$STATE/wifi.dirty";return; }
     timeout 2 iw dev 2>/dev/null | awk '$1=="Interface" && $2~/^[a-zA-Z0-9_.:-]+$/{print $2}' | head -n 4 > "$STATE/wifi.interfaces"
     json_init;json_add_object wifi;json_add_boolean available 1
     country=$(timeout 2 iw reg get 2>/dev/null | awk '/^country [A-Z][A-Z]:/{sub(":","",$2);print $2;exit}')
     [ -z "$country" ] || json_add_string country "$country"
     json_add_array radios
-    client_budget=24;salt_available=0
-    if [ -f "$CONFIG_DIR/privacy-salt" ] && [ ! -L "$CONFIG_DIR/privacy-salt" ] && command -v sha256sum >/dev/null;then
-        if [ "$(stat -c '%a:%u' "$CONFIG_DIR/privacy-salt")" = "600:$(id -u)" ];then
-            if IFS= read -r privacy_salt < "$CONFIG_DIR/privacy-salt" && [ "${#privacy_salt}" -eq 64 ];then
-                case "$privacy_salt" in *[!a-f0-9]*);;*)salt_available=1;;esac
-            fi
-        fi
-    fi
+    client_budget=24
+    privacy_salt=$(load_privacy_salt) || privacy_salt=
     while read -r interface;do
         timeout 2 iw dev "$interface" station dump 2>/dev/null | head -c 32768 | awk '
         function flush(){if(mac!="" && n++<24)print mac,signal,rx,tx,retries,failed,rxrate,txrate}
@@ -254,7 +249,7 @@ collect_wifi() {
         while read -r mac sig rx tx retries failed rxrate txrate;do
             [ "$client_budget" -gt 0 ] || continue
             case "$mac" in *[!a-fA-F0-9:]*)continue;;esac
-            [ "$salt_available" = 1 ] || continue
+            [ -n "$privacy_salt" ] || continue
             # Secret prefix plus suffix prevents exposing stable public MAC hashes.
             # Local random salt never leaves this device or enters command arguments.
             client_id=$(printf '%s%s%s' "$privacy_salt" "$mac" "$privacy_salt" | sha256sum)
@@ -280,7 +275,6 @@ collect_wifi() {
         while read -r key value;do case "$value" in ''|*[!0-9-]*)continue;;esac;json_add_int "$key" "$value";done < "$STATE/survey.input"
         json_close_object;json_close_object
     done < "$STATE/wifi.interfaces"
-    unset privacy_salt
     json_close_array;json_close_object;uptime_now;json_add_double wifi_uptime_s "$uptime";json_dump > "$STATE/wifi.new";mv "$STATE/wifi.new" "$STATE/wifi.json";: > "$STATE/wifi.dirty"
     rm -f "$STATE/stations.input"
 }

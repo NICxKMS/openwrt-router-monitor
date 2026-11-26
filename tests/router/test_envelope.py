@@ -17,7 +17,7 @@ class Envelope(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.state = Path(self.temp.name)
         self.bin = self.state/'bin';self.bin.mkdir()
-        self.env = dict(os.environ, NICX_STATE=str(self.state), NICX_LIB=str(LIB), NICX_JSHN=str(STAGING/'share/libubox/jshn.sh'), NICX_AGENT_LIBRARY_ONLY='1', PATH=str(self.bin)+':'+str(STAGING/'bin')+':'+os.environ['PATH'])
+        self.env = dict(os.environ, NICX_STATE=str(self.state), NICX_CONFIG_DIR=str(self.state/'config'), NICX_LIB=str(LIB), NICX_JSHN=str(STAGING/'share/libubox/jshn.sh'), NICX_AGENT_LIBRARY_ONLY='1', PATH=str(self.bin)+':'+str(STAGING/'bin')+':'+os.environ['PATH'])
         self.env['LD_LIBRARY_PATH'] = str(STAGING/'lib')
         self.write_tool('jsonfilter', r'''#!/usr/bin/env python3
 import json,sys,re
@@ -97,12 +97,20 @@ printf '%s\n' "$ud"
         self.assertGreater(sample['mem_total_kb'],0)
         self.assertIsNone(sample['cpu_pct'])
         self.assertIsNone(sample['observed_at'])
-        self.assertIn('cores',sample['detail']['cpu'])
+        cpu = sample['detail']['cpu']
+        self.assertIsInstance(cpu['cores'], dict)
+        self.assertRegex(cpu['scheduler']['ctxt'], r'^\d+$')
+        self.assertNotIn('cpu_pct', cpu)
         self.assertIn('processes',sample['detail'])
         self.assertLess(len(json.dumps(sample['detail']).encode()),16384)
 
     def test_device_tree_memory_reports_sizes_without_addresses(self):
         root = self.state/'devicetree'
+        config = Path(self.env['NICX_CONFIG_DIR'])
+        config.mkdir()
+        salt = config/'privacy-salt'
+        salt.write_text('a'*64+'\n')
+        salt.chmod(0o600)
         region = root/'reserved-memory'/'qcom,q6@4b000000'
         second = root/'reserved-memory'/'qcom,q6@4e000000'
         memory = root/'memory@40000000'
@@ -139,6 +147,13 @@ printf '%s\n' "$ud"
         (earlier/'reg').write_bytes(bytes.fromhex('00000000420000000000000000100000'))
         result = json.loads(self.shell('json_init; collect_device_tree_memory "$STATE/devicetree"; json_dump'))
         self.assertEqual([entry['id'] for entry in result['reservations'][1:]], ids)
+        salt.write_text('b'*64+'\n')
+        result = json.loads(self.shell('json_init; collect_device_tree_memory "$STATE/devicetree"; json_dump'))
+        self.assertTrue(set(entry['id'] for entry in result['reservations'][1:]).isdisjoint(ids))
+        salt.chmod(0o644)
+        result = json.loads(self.shell('json_init; collect_device_tree_memory "$STATE/devicetree"; json_dump'))
+        self.assertTrue(all('id' not in entry for entry in result['reservations']))
+
 
     def test_cpu_frequency_and_softirqs_use_fixture_roots(self):
         proc = self.state/'fixture-proc'
@@ -155,13 +170,13 @@ printf '%s\n' "$ud"
             'cpu_softirq': {'NET_RX': '13', 'TIMER': '0'},
         })
 
-    def test_sockstat_keeps_udplite_counters(self):
+    def test_sockstat_exposes_summary_and_udplite_counters(self):
         proc = self.state/'fixture-proc'
         (proc/'net').mkdir(parents=True)
         (proc/'meminfo').write_text('MemTotal: 1024 kB\n')
-        (proc/'net'/'sockstat').write_text('UDPLITE: inuse 2 mem 5\nUNKNOWN: inuse 1\n')
+        (proc/'net'/'sockstat').write_text('sockets: used 6\nUDPLITE: inuse 2 mem 5\nUNKNOWN: inuse 1\n')
         detail = json.loads(self.shell('json_init; collect_memory_diagnostics "$STATE/fixture-proc" "$STATE/fixture-sys"; json_dump'))
-        self.assertEqual(detail['sockets'], {'UDPLITE': {'inuse': 2, 'mem': 5}})
+        self.assertEqual(detail['sockets'], {'used': 6, 'UDPLITE': {'inuse': 2, 'mem': 5}})
 
     def test_slow_detail_is_sparse_on_subsequent_samples(self):
         output=self.shell('collect_detail;collect_processes;collect_wifi;collect_connectivity;collect_sample;cat "$STATE/sample";collect_sample;cat "$STATE/sample"')
@@ -724,8 +739,12 @@ rm -f "$STATE/auth"
 ''')
         pid=int((self.state/'transport.pid').read_text())
         # A reparented zombie cannot write; a live descendant is a regression.
-        stat=Path(f'/proc/{pid}/stat')
-        if stat.exists():self.assertEqual(stat.read_text().split(') ')[1].split()[0],'Z')
+        try:
+            stat = Path(f'/proc/{pid}/stat').read_text()
+        except FileNotFoundError:
+            pass
+        else:
+            self.assertEqual(stat.rsplit(') ', 1)[1].split()[0], 'Z')
         self.assertFalse((self.state/'late-writer').exists())
         self.assertFalse((self.state/'auth').exists())
 

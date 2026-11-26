@@ -101,6 +101,11 @@ export function MemoryBreakdown({ memory }: { memory: Row }) {
   const zram = rows(memory.zram);
   const swap = object(memory.swap);
   const sockets = object(memory.sockets);
+  const socketTotal = num(sockets.used ?? object(sockets.sockets).used);
+  const socketRows: Row[] = Object.entries(sockets).flatMap(([name, entry]) => (
+    name === 'used' || name === 'sockets' ? [] : [{ name: sentenceCase(name), ...object(entry) }]
+  ));
+  if (socketTotal !== null) socketRows.unshift({ name: 'All sockets', used: socketTotal });
 
   if (!Object.keys(accounting).length) return null;
   return (
@@ -161,7 +166,7 @@ export function MemoryBreakdown({ memory }: { memory: Row }) {
           ]} /> : <Empty title="No zram device reported" />}
         </Card>
         <Card title="Network socket memory" description="TCP and UDP memory counters are in pages. Fragment memory is in bytes.">
-          <DataTable data={Object.entries(sockets).map(([name, entry]) => ({ name: sentenceCase(name), ...object(entry) }))} columns={[
+          <DataTable data={socketRows} columns={[
             { key: 'name', label: 'Socket class' }, { key: 'inuse', label: 'In use' }, { key: 'used', label: 'Sockets' },
             { key: 'mem', label: 'Pages' }, { key: 'memory', label: 'Fragment memory', render: bytes },
           ]} />
