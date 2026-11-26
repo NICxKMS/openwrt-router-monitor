@@ -496,7 +496,7 @@ export function Memory() {
         <Stat label="Memory in use" value={fmt(usedPct, '%')} sub={totalKb && availKb !== null ? mib(totalKb - availKb) : 'Unavailable'} tone={memTone(usedPct)} />
         <Stat label="Available RAM" value={mib(availKb)} sub="Includes memory kernel can reclaim" />
         <Stat
-          label="OOM & reclaimable"
+          label="OOM & cache"
           value={oomKills !== null ? `${oomKills} OOM` : bytes(reclaimableTotal)}
           sub={reclaimableTotal !== null ? `${bytes(reclaimableTotal)} cache + reclaimable slab` : 'VM counters at 5m cadence'}
           tone={oomKills !== null && oomKills > 0 ? 'bad' : 'default'}
@@ -512,7 +512,7 @@ export function Memory() {
       <div className="two-col">
         <Card
           title="Kernel memory categories"
-          description="File cache and reclaimable pages can be reused. Total slab includes its reclaimable and unreclaimable parts; do not sum rows."
+          description="Cache includes shared memory and tmpfs. Total slab includes reclaimable and unreclaimable parts; do not sum rows."
         >
           <DataTable
             data={categories}

@@ -39,7 +39,7 @@ export function CpuBreakdown({ detail }: { detail: Row }) {
       </Card>
       <div className="two-col">
         <Card title="Top tasks by CPU" description="Share of total machine CPU between process samples. Short-lived tasks may finish between samples." action={<CollectorLag uptimeKey="processes_uptime_s" label="Tasks" />}>
-          {tasks.length ? <DataTable data={tasks} columns={[
+          {tasks.length ? <DataTable data={tasks.map((task) => ({ ...task, id: String(task.pid) }))} columns={[
             { key: 'name', label: 'Task' },
             { key: 'pid', label: 'PID' },
             { key: 'cpu_pct', label: 'CPU', render: (value) => fmt(value, '%', 1) },

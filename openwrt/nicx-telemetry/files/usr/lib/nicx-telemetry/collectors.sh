@@ -203,7 +203,14 @@ collect_detail() {
     json_add_string dns_counters 'unavailable: no stable dnsmasq counter ABI without query logging'
     json_add_string dns_queries 'disabled: privacy policy'
     json_close_object
-    uptime_now;json_add_double detail_uptime_s "$uptime";json_dump > "$STATE/detail.new";mv "$STATE/detail.new" "$STATE/detail.json";: > "$STATE/detail.dirty"
+    uptime_now;json_add_double detail_uptime_s "$uptime"
+    json_dump > "$STATE/detail.base"
+    awk -v state="$STATE/cpu-detail.previous" -f "$LIB/cpu.awk" /proc/stat > "$STATE/cpu-detail.json"
+    read -r detail_fragment < "$STATE/detail.base"
+    read -r cpu_fragment < "$STATE/cpu-detail.json"
+    cpu_fragment=${cpu_fragment#*,}
+    printf '%s,"cpu":{%s}\n' "${detail_fragment%\}}" "$cpu_fragment" > "$STATE/detail.new"
+    mv "$STATE/detail.new" "$STATE/detail.json";: > "$STATE/detail.dirty"
 }
 collect_inventory() {
     board=$(timeout 2 ubus call system board 2>/dev/null | head -c 8192)
@@ -317,10 +324,8 @@ collect_sample() {
     printf '{"seq":%s,"uptime_s":%s,"observed_at":%s,"load1":%s,"temp_c":%s,' "$seq" "$uptime" "$observed_at" "$load" "$temp" > "$STATE/sample"
     for part in memory network;do read -r fragment < "$STATE/$part.json";fragment=${fragment#\{};fragment=${fragment%\}};printf '%s,' "$fragment" >> "$STATE/sample";done
     cpu=$(jsonfilter -i "$STATE/cpu.json" -e '@.cpu_pct')
-    read -r fragment < "$STATE/cpu.json"
-    fragment=${fragment#\{}
-    printf '%s' "${fragment%\}\}}" >> "$STATE/sample"
-    printf ',"meminfo":' >> "$STATE/sample";cat "$STATE/memory.json" >> "$STATE/sample"
+    printf '"cpu_pct":%s,"detail":{' "${cpu:-null}" >> "$STATE/sample"
+    printf '"meminfo":' >> "$STATE/sample";cat "$STATE/memory.json" >> "$STATE/sample"
     # Alert duration and freshness checks need the locally effective collection cadence.
     # Keep it in the base sample even when extended collector data exceeds its bound.
     set_cadence 30 120;connectivity_cadence=$scheduled_interval

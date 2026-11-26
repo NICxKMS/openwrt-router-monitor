@@ -124,10 +124,12 @@ printf '%s\n' "$ud"
         })
 
     def test_slow_detail_is_sparse_on_subsequent_samples(self):
-        output=self.shell('collect_detail;collect_processes;collect_wifi;collect_connectivity;collect_sample;collect_sample;cat "$STATE/sample"')
-        sample=json.loads(output)
-        self.assertEqual(set(sample['detail']),{'cpu','meminfo','cadence'})
-        self.assertLess(len(output.encode()),1800)
+        output=self.shell('collect_detail;collect_processes;collect_wifi;collect_connectivity;collect_sample;cat "$STATE/sample";collect_sample;cat "$STATE/sample"')
+        first, end = json.JSONDecoder().raw_decode(output)
+        sample = json.loads(output[end:])
+        self.assertIn('scheduler', first['detail']['cpu'])
+        self.assertEqual(set(sample['detail']),{'meminfo','cadence'})
+        self.assertLess(len(json.dumps(sample).encode()),1800)
 
     def test_each_sample_reports_local_and_adaptive_collection_cadence(self):
         output=self.shell('''sample_interval=120;effective_sample_interval=120;detail_interval=300;adaptive_active=0

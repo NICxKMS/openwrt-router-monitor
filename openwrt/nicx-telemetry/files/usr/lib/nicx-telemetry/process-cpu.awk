@@ -17,7 +17,7 @@ BEGIN {
     # The command name may contain spaces or parentheses. Export only safe names.
     if (!match($0,/^.*\) /)) next
     name=substr($0,length(pid)+3,RLENGTH-length(pid)-4)
-    if (name !~ /^[A-Za-z0-9_.:-]+$/ || length(name)>64) name = "task"
+    if (name !~ /^[A-Za-z0-9_.:\/-]+$/ || length(name)>64) name = "task"
     if (split(substr($0,RLENGTH+1), fields, " ")<20) next
     start=fields[20]
     if (start !~ /^[0-9]+$/ || fields[12] !~ /^[0-9]+$/ || fields[13] !~ /^[0-9]+$/) next

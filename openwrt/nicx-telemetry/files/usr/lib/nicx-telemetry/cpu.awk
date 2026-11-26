@@ -50,7 +50,8 @@ BEGIN {
 END {
     printf "{\"cpu_pct\":%s,", aggregate == "" ? "null" : aggregate
     if (sample) printf "\"detail\":{\"cpu\":{"
-    printf "\"cores\":{%s},\"modes\":{%s},\"core_modes\":{%s},\"scheduler\":{%s}}",
+    if (sample) printf "\"cores\":{%s}}", cores
+    else printf "\"cores\":{%s},\"modes\":{%s},\"core_modes\":{%s},\"scheduler\":{%s}}",
         cores, aggregate_modes, core_modes, scheduler
     print sample ? "}}" : ""
     printf "%s", nextstate > state

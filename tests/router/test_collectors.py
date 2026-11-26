@@ -35,11 +35,11 @@ class Collectors(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             state = str(pathlib.Path(d) / 'previous')
 
-            def snapshot(idle, start, ticks):
+            def snapshot(idle, start, ticks, name="dnsmasq"):
                 fields = ['S'] + ['0'] * 19
                 fields[11:13] = [str(ticks), '4']
                 fields[19] = str(start)
-                data = f"cpu 100 0 50 {idle} 0 0 0 0\n9 (dnsmasq) {' '.join(fields)}\n"
+                data = f"cpu 100 0 50 {idle} 0 0 0 0\n9 ({name}) {' '.join(fields)}\n"
                 output = self.run_awk('process-cpu.awk', data, state=state).strip()
                 pathlib.Path(state + '.new').replace(state)
                 return output
@@ -47,6 +47,7 @@ class Collectors(unittest.TestCase):
             self.assertEqual(snapshot(800, 1, 10), '')
             self.assertEqual(snapshot(900, 1, 30), '20.000 9 dnsmasq')
             self.assertEqual(snapshot(1000, 2, 50), '')
+            self.assertEqual(snapshot(1100, 2, 60, 'ksoftirqd/0'), '10.000 9 ksoftirqd/0')
 
     def test_counter_exact_above_float_precision_and_reset(self):
         with tempfile.TemporaryDirectory() as d:
