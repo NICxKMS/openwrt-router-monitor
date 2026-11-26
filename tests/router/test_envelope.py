@@ -689,6 +689,13 @@ rm -f "$STATE/auth"
         self.assertFalse((self.state/'late-writer').exists())
         self.assertFalse((self.state/'auth').exists())
 
+    def test_cleanup_stops_root_if_process_enumeration_fails(self):
+        self.shell('''sleep 20 & child=$!
+awk() { return 1; }
+terminate_roots "$child"
+kill -0 "$child" 2>/dev/null && exit 1
+:''')
+
     def test_critical_log_evicts_full_notice_group_map(self):
         (self.state/'logs').mkdir()
         data=''.join(f'Wed Nov 25 10:00:00 2026 daemon.notice daemon: storm{i}\n' for i in range(12))+ 'Wed Nov 25 10:00:01 2026 kern.crit kernel: OOM killed worker\n__NICX_TICK__\n'
