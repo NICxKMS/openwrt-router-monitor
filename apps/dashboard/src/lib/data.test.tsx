@@ -7,6 +7,7 @@ const mock=vi.hoisted(()=>({from:vi.fn(),rpc:vi.fn(),channel:vi.fn(),removeChann
 vi.mock('./client',()=>({db:{from:mock.from,rpc:mock.rpc,channel:mock.channel,removeChannel:mock.removeChannel}}));
 import {MonitorProvider,useMonitor,useQuery} from './data';
 import {db} from './client';
+import {writePreference} from './model';
 const device={id:'device-a',name:'Home',config:{},created_at:'2026-11-25T00:00:00Z'};
 function Probe(){const s=useMonitor();return <div><p>{s.device?.name||'none'}</p><p>{s.history.length} samples</p><p>CPU {s.latest?.cpu_pct}</p><button onClick={()=>s.setRange({from:'2026-11-24T00:00:00Z',to:'2026-11-24T02:00:00Z',live:false,hours:0})}>Historical window</button><button onClick={()=>s.setPaused(!s.paused)}>Toggle pause</button></div>;}
 const session={user:{id:'owner-a'}} as Session;
@@ -57,4 +58,70 @@ it('does not repeat a failed manual refresh of an already loaded historical wind
   await act(() => vi.advanceTimersByTimeAsync(60000));
   expect(mock.rpc).toHaveBeenCalledTimes(historyReads);
   expect(mock.from.mock.calls.filter(([table]) => table === 'devices')).toHaveLength(deviceReads);
+});
+
+it('applies an in-flight historical refresh despite a realtime tick', async () => {
+  render(<MonitorProvider session={session}><RefreshProbe /></MonitorProvider>);
+  await waitFor(() => expect(screen.getByText('CPU 3')).toBeTruthy());
+  act(() => screen.getByText('Historical window').click());
+  await waitFor(() => expect(screen.getByText('CPU 9')).toBeTruthy());
+  const history = deferred<{data: {cpu_pct: number}[]; error: null}>();
+  mock.rpc.mockReturnValueOnce(history.promise);
+  act(() => screen.getByText('Refresh current page').click());
+  act(() => mock.on.mock.lastCall?.[2]());
+  expect(screen.getByText('Refresh pending')).toBeTruthy();
+  await act(async () => history.resolve({data: [{cpu_pct: 8}, {cpu_pct: 9}], error: null}));
+  expect(screen.getByText('2 samples')).toBeTruthy();
+  expect(screen.getByText('Refresh completed')).toBeTruthy();
+});
+
+it('refreshes acknowledged alerts in a frozen history window', async () => {
+  let acknowledged = false;
+  const applyAck = deferred<void>();
+  const original = mock.from.getMockImplementation()!;
+  mock.from.mockImplementation((name: string) => {
+    const builder = original(name);
+    if (name !== 'alerts') return builder;
+    return Object.assign(builder, {
+      then: (resolve: (value: unknown) => unknown) => {
+        const ackTime = acknowledged ? '2026-11-25T00:00:00Z' : null;
+        return (ackTime ? applyAck.promise : Promise.resolve()).then(() => resolve({
+          data: [{ id: 'active-alert', resolved_at: null, acknowledged_at: ackTime }],
+          error: null,
+        }));
+      },
+    });
+  });
+  function AlertMutation() {
+    const { openAlerts, refreshAlerts } = useMonitor();
+    return <>
+      <span>{openAlerts[0]?.acknowledged_at ? 'Acknowledged alert' : 'Waiting for acknowledgement'}</span>
+      <button onClick={() => { acknowledged = true; refreshAlerts(); }}>Acknowledge alert</button>
+    </>;
+  }
+  render(<MonitorProvider session={session}><Probe /><AlertMutation /></MonitorProvider>);
+  await waitFor(() => expect(screen.getByText('CPU 3')).toBeTruthy());
+  act(() => screen.getByText('Historical window').click());
+  await waitFor(() => expect(screen.getByText('CPU 9')).toBeTruthy());
+  act(() => screen.getByText('Acknowledge alert').click());
+  act(() => mock.on.mock.lastCall?.[2]());
+  await act(async () => applyAck.resolve());
+  await waitFor(() => expect(screen.getByText('Acknowledged alert')).toBeTruthy());
+});
+
+it('resumes periodic polling after a manual request spans the next poll', async () => {
+  vi.useFakeTimers();
+  writePreference('refresh-seconds', 10);
+  render(<MonitorProvider session={session}><RefreshProbe /></MonitorProvider>);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const history = deferred<{data: {cpu_pct: number}[]; error: null}>();
+  mock.rpc.mockReturnValueOnce(history.promise);
+  act(() => screen.getByText('Refresh current page').click());
+  const reads = mock.rpc.mock.calls.length;
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(mock.rpc).toHaveBeenCalledTimes(reads);
+  await act(async () => history.resolve({data: [{cpu_pct: 5}], error: null}));
+  expect(screen.getByText('Refresh completed')).toBeTruthy();
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(mock.rpc).toHaveBeenCalledTimes(reads + 1);
 });

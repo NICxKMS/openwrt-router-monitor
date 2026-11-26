@@ -15,7 +15,7 @@ import {
   relativeAge,
   rows,
   sentenceCase,
-  sumTrafficBytes,
+  sumWindowTraffic,
   trafficDelta,
   type Row,
   type Sample,
@@ -92,7 +92,7 @@ export function HistoryChart({
   }, []);
 
   const cadence = bucketCadenceLabel(history);
-  const trafficTotals = activeMetric === 'network_mbps' || activeMetric === 'network_mib' ? sumTrafficBytes(history) : null;
+  const trafficTotals = activeMetric === 'network_mbps' || activeMetric === 'network_mib' ? sumWindowTraffic(history) : null;
 
   let summaryContent: ReactNode = null;
   if (history.length) {
@@ -168,7 +168,7 @@ export function HistoryChart({
               </>
             )}
             {trafficTotals && (
-              <span>Window volume <strong>{bytes(trafficTotals.total)}</strong>{trafficTotals.total === null && ' (incomplete data)'}</span>
+              <span>{trafficTotals.approximate ? 'Approximate window volume' : 'Window volume'} <strong>{bytes(trafficTotals.total)}</strong>{trafficTotals.total === null && ' (incomplete data)'}</span>
             )}
           </>
         );
@@ -178,7 +178,7 @@ export function HistoryChart({
         <>
           <span>Downloaded (↓) <strong>{bytes(trafficTotals.rx)}</strong></span>
           <span>Uploaded (↑) <strong>{bytes(trafficTotals.tx)}</strong></span>
-          <span>Combined total <strong>{bytes(trafficTotals.total)}</strong>{trafficTotals.total === null && ' (incomplete data)'}</span>
+          <span>{trafficTotals.approximate ? 'Approximate combined total' : 'Combined total'} <strong>{bytes(trafficTotals.total)}</strong>{trafficTotals.total === null && ' (incomplete data)'}</span>
           {cadence && <span>Resolution <strong>{cadence}</strong></span>}
         </>
       );
@@ -443,6 +443,8 @@ export function Interfaces({ wanOnly = false }: { wanOnly?: boolean }) {
             },
           ]}
         />
+      ) : wanOnly && allRows.length > 0 ? (
+        <Empty title="No WAN uplink counters reported">This observation contains counters for other interfaces.</Empty>
       ) : (
         <Empty title="No interface counters reported">
           {range.live

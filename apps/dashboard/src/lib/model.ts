@@ -50,6 +50,7 @@ export interface Sample {
   sample_count?: number;
   rx_delta_count?: number | null;
   tx_delta_count?: number | null;
+  traffic_window_exact?: boolean;
 }
 export interface TimeRange { from: string; to: string; live: boolean; hours: number }
 
@@ -93,7 +94,8 @@ export const rate = (delta: unknown, seconds: unknown): number | null => {
 export function formatMbps(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return '—';
   if (v === 0) return '0 Mbps';
-  if (v > 0 && v < 0.01) return `${fmt(v * 1000, ' Kbps', 0)}`;
+  if (v > 0 && v < 0.001) return '<1 Kbps';
+  if (v > 0 && v < 0.01) return fmt(v * 1000, ' Kbps', 0);
   if (v < 1) return fmt(v, ' Mbps', 2);
   return fmt(v, ' Mbps', 1);
 }
@@ -124,6 +126,15 @@ export function sumTrafficBytes(samples: TrafficSample[]): { rx: number | null; 
   }
   if (!seen) return null;
   return { rx: rxComplete ? rx : null, tx: txComplete ? tx : null, total: rxComplete && txComplete ? rx + tx : null };
+}
+
+export function sumWindowTraffic(samples: Sample[]) {
+  const totals = sumTrafficBytes(samples);
+  if (!totals) return null;
+  return {
+    ...totals,
+    approximate: samples.some((sample) => sample.traffic_window_exact !== true),
+  };
 }
 
 export function bucketCadenceLabel(samples: Sample[]): string {

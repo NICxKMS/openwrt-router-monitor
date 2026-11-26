@@ -31,6 +31,7 @@ before(async()=>{
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250007_alert_continuity.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250008_backend_review.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611260009_traffic_delta_counts.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../supabase/migrations/202611260010_traffic_window_precision.sql',import.meta.url),'utf8'));
  await db.exec(`insert into public.enrollment_tokens(owner_id,token_hash,expires_at,name) values ('${owner}','${'e'.repeat(64)}',now()+interval '5 minutes','test');`);
  device=(await rpc('enroll_device',['e'.repeat(64),token,'test','fixture'])).device_id;
 });
@@ -164,6 +165,11 @@ test('history uses minute rollups for incomplete raw buckets inside the configur
   assert.deepEqual(minute.map(x=>[Number(x.sample_count),x.cpu_pct]),[[2,35],[1,90]]);
   assert.deepEqual(minute.map(x=>[Number(x.rx_delta_count),Number(x.tx_delta_count)]),[[1,1],[0,0]]);
   assert.equal(Number(minute[0].rx_bytes_delta),100000);
+  assert.deepEqual(minute.map(x=>x.traffic_window_exact),[false,false]);
+  const aligned=await rpc('history',[id,time(0),time(120)]);
+  assert.deepEqual(aligned.map(x=>x.traffic_window_exact),[true,true]);
+  const clippedEnd=await rpc('history',[id,time(0),time(90)]);
+  assert.deepEqual(clippedEnd.map(x=>x.traffic_window_exact),[true,false]);
   const laterRaw=await rpc('history',[id,time(60),time(90)]);
   assert.deepEqual(laterRaw.map(x=>new Date(x.bucket).valueOf()),[time(72).valueOf()]);
  }finally{await db.exec('reset role');await q('delete from public.devices where id=$1',[id]);}

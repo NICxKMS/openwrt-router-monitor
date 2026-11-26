@@ -478,7 +478,7 @@ function PreparedArchiveLink({ id, link, zone }: { id: string; link: { url: stri
 }
 
 export function Alerts() {
-  const { device, tick, refresh, zone } = useMonitor();
+  const { device, tick, refreshAlerts, zone } = useMonitor();
   const [status, setStatus] = useState('open');
   const [page, setPage] = useState(0);
 
@@ -578,7 +578,7 @@ export function Alerts() {
                     onAction={async (action) => {
                       await ownerApi(`/api/v1/alerts/${v}/ack`, undefined, 'POST', action.signal);
                       action.signal.throwIfAborted();
-                      refresh();
+                      refreshAlerts();
                     }}
                   >
                     Acknowledge

@@ -22,6 +22,7 @@ interface Store {
   setRefreshSeconds: (n: number) => void;
   tick: number;
   refresh: (forceDevices?: boolean) => void;
+  refreshAlerts: () => void;
   manualRefresh: () => Promise<void>;
   lastRefreshAt: string | null;
   error: string;
@@ -76,6 +77,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const [theme, setThemeState] = useState(() => readPreference('theme', 'dark'));
   const [tick, setTick] = useState(0);
   const [manualEpoch, setManualEpoch] = useState(0);
+  const [alertEpoch, setAlertEpoch] = useState(0);
   const [deviceError, setDeviceError] = useState('');
   const [metricError, setMetricError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -83,8 +85,10 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
   const running = useRef(new Map<string, Promise<void>>());
   const waiters = useRef<{ resolve: () => void; reject: (error: Error) => void }[]>([]);
+  const pendingManual = useRef(0);
   const loadedWindowRef = useRef('');
   const lastManualEpochRef = useRef(0);
+  const lastAlertEpochRef = useRef(0);
   const lastDeviceManualEpochRef = useRef(0);
   const loadedDevicesEpochRef = useRef(-1);
 
@@ -101,9 +105,18 @@ export function MonitorProvider({ session, children }: { session: Session; child
     if (forceDevices) loadedDevicesEpochRef.current = -1;
     setTick((t) => t + 1);
   }, []);
+  const refreshAlerts = useCallback(() => {
+    setAlertEpoch((n) => n + 1);
+    refresh();
+  }, [refresh]);
+  const poll = useCallback(() => {
+    // The explicit refresh already covers this tick and must be allowed to finish.
+    if (pendingManual.current === 0) refresh();
+  }, [refresh]);
   const manualRefresh = useCallback(
     () =>
       new Promise<void>((resolve, reject) => {
+        pendingManual.current += 1;
         waiters.current.push({ resolve, reject });
         setManualEpoch((n) => n + 1);
         setTick((t) => t + 1);
@@ -116,6 +129,9 @@ export function MonitorProvider({ session, children }: { session: Session; child
   const rangeKey = timeRangeKey(range);
   const visible = useRef(document.visibilityState !== 'hidden');
   const device = useMemo(() => devices.find((d) => d.id === selected) || devices[0] || null, [devices, selected]);
+  const hasLoadedWindow = latestDevice === device?.id && dataRange === rangeKey;
+  // A frozen window can retry its initial load, but later ticks must not cancel explicit reads.
+  const metricTick = range.live || !hasLoadedWindow ? tick : 0;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -137,7 +153,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
         .order('created_at'),
     )
       .then(({ data, error }) => {
-        if (!active) return;
+        if (!active) throw new Error('Refresh superseded by a newer request.');
         if (error) {
           setDeviceError(error.message);
           throw new Error(error.message);
@@ -165,20 +181,20 @@ export function MonitorProvider({ session, children }: { session: Session; child
   useEffect(() => {
     const change = () => {
       visible.current = document.visibilityState !== 'hidden';
-      if (visible.current && !paused) refresh();
+      if (visible.current && !paused) poll();
     };
     document.addEventListener('visibilitychange', change);
     const timer =
-      !paused && visible.current
-        ? setTimeout(() => {
-            if (!paused && visible.current) refresh();
+      !paused
+        ? setInterval(() => {
+            if (visible.current) poll();
           }, refreshSeconds * 1000)
         : undefined;
     return () => {
-      if (timer) clearTimeout(timer);
+      if (timer !== undefined) clearInterval(timer);
       document.removeEventListener('visibilitychange', change);
     };
-  }, [paused, refresh, refreshSeconds, tick]);
+  }, [paused, poll, refreshSeconds, tick]);
 
   useEffect(() => {
     if (!device) {
@@ -189,12 +205,10 @@ export function MonitorProvider({ session, children }: { session: Session; child
       return;
     }
     const windowKey = `${device.id}:${rangeKey}`;
-    const manualTriggered = manualEpoch !== lastManualEpochRef.current;
-    // Frozen historical ranges are immutable; skip automatic timer ticks once loaded unless user forces a refresh.
-    if (!range.live && loadedWindowRef.current === windowKey && !manualTriggered) {
-      return;
-    }
+    const explicitRefresh = manualEpoch !== lastManualEpochRef.current || alertEpoch !== lastAlertEpochRef.current;
+    if (!range.live && loadedWindowRef.current === windowKey && !explicitRefresh) return;
     lastManualEpochRef.current = manualEpoch;
+    lastAlertEpochRef.current = alertEpoch;
     let active = true;
     const query = async () => {
       try {
@@ -226,7 +240,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
         );
         const error = latestResult.error || historyResult.error || snapshotResult.error || alertsResult.error;
         if (error) throw new Error(error.message);
-        if (!active) return;
+        if (!active) throw new Error('Refresh superseded by a newer request.');
         loadedWindowRef.current = windowKey;
         setMetricError('');
         setLatestDevice(device.id);
@@ -252,13 +266,14 @@ export function MonitorProvider({ session, children }: { session: Session; child
     return () => {
       active = false;
     };
-  }, [device?.id, tick, range, rangeKey, manualEpoch, track]);
+  }, [device?.id, metricTick, range, rangeKey, manualEpoch, alertEpoch, track]);
 
   // Child query effects and the core effects above register their real promises before this effect.
   useEffect(() => {
     if (!manualEpoch || !waiters.current.length) return;
     const requests = waiters.current.splice(0);
     void Promise.allSettled([...running.current.values()]).then((results) => {
+      pendingManual.current -= requests.length;
       const failure = results.find((result) => result.status === 'rejected');
       if (failure?.status === 'rejected') {
         for (const request of requests) request.reject(new Error(actionError(failure.reason)));
@@ -277,7 +292,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
       channel = db!
         .channel('latest:' + device.id)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'device_latest', filter: `device_id=eq.${device.id}` }, () =>
-          refresh(),
+          poll(),
         )
         .subscribe((status) => setTransport(status === 'SUBSCRIBED' ? `Live + ${refreshSeconds}s sync` : `${refreshSeconds}s polling`));
     };
@@ -295,7 +310,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
       document.removeEventListener('visibilitychange', visibility);
       if (channel) void db!.removeChannel(channel);
     };
-  }, [device?.id, paused, refresh, refreshSeconds]);
+  }, [device?.id, paused, poll, refreshSeconds]);
 
   const selectDevice = useCallback((id: string) => {
     setSelected(id);
@@ -337,6 +352,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
       setTheme: setThemeState,
       tick,
       refresh,
+      refreshAlerts,
       manualRefresh,
       lastRefreshAt,
       error: deviceError || metricError,
@@ -360,6 +376,7 @@ export function MonitorProvider({ session, children }: { session: Session; child
       theme,
       tick,
       refresh,
+      refreshAlerts,
       manualRefresh,
       lastRefreshAt,
       deviceError,

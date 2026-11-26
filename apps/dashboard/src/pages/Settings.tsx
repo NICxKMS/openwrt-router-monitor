@@ -143,10 +143,10 @@ export function Settings() {
   );
 
   const path = `/api/v1/devices/${device!.id}`;
-  async function mutate(endpoint: string, body?: unknown, method = 'POST', signal?: AbortSignal) {
+  async function mutate(endpoint: string, body?: unknown, method = 'POST', signal?: AbortSignal, forceDevices = true) {
     const result = await ownerApi(endpoint, body, method, signal);
     signal?.throwIfAborted();
-    refresh(true);
+    refresh(forceDevices);
     return result;
   }
 
@@ -325,7 +325,7 @@ export function Settings() {
           pending="Saving the client name…"
           success="Client name saved."
           onSubmit={async (form, action, values) => {
-            await mutate(`${path}/client-names/${encodeURIComponent(String(values.get('client')))}`, { name: values.get('name') }, 'PUT', action.signal);
+            await mutate(`${path}/client-names/${encodeURIComponent(String(values.get('client')))}`, { name: values.get('name') }, 'PUT', action.signal, false);
             setClientRevision((r) => r + 1);
             form.reset();
           }}
@@ -359,7 +359,7 @@ export function Settings() {
                     pending="Saving this client name…"
                     success="Client name updated."
                     onSubmit={async (_form, action, values) => {
-                      await mutate(`${path}/client-names/${encodeURIComponent(String(row.client_id))}`, { name: values.get('name') }, 'PUT', action.signal);
+                      await mutate(`${path}/client-names/${encodeURIComponent(String(row.client_id))}`, { name: values.get('name') }, 'PUT', action.signal, false);
                       setClientRevision((r) => r + 1);
                     }}
                   >

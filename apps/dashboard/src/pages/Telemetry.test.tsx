@@ -56,6 +56,7 @@ vi.mock('../components/Chart', () => ({ default: () => null }));
 
 import { CPU, DNS, Network, Overview, WiFi } from './Telemetry';
 import { ActionProvider } from '../components/Actions';
+import { Interfaces } from '../components/Shared';
 
 const sample = {
   uptime_s: 3600,
@@ -249,6 +250,11 @@ describe('structured telemetry views', () => {
     rerender(<Network />);
     await waitFor(() => expect(screen.getAllByText('2026-01-30')).toHaveLength(4));
     expect(screen.getByText('124 GB used of 200 GB')).toBeInTheDocument();
+
+    fixture.bandwidthDaily[0].rx_bytes = 1_900_000_000;
+    fixture.monitor.tick = 1;
+    rerender(<Network />);
+    expect(await screen.findByText('125 GB used of 200 GB')).toBeInTheDocument();
   });
 
   it('separates speed and consumed traffic stats on Network without flashing quota loading on poll', async () => {
@@ -265,6 +271,7 @@ describe('structured telemetry views', () => {
     const { rerender } = render(<Network />);
     expect(await screen.findByText('2 GB used of 200 GB')).toBeInTheDocument();
     expect(screen.getAllByText('12 MiB').length).toBeGreaterThan(0);
+    expect(screen.getByText('Approx. consumed in window')).toBeInTheDocument();
     expect(screen.getByText('Internet speed (Rx & Tx)')).toBeInTheDocument();
     expect(screen.getByText('Data consumed per interval')).toBeInTheDocument();
 
@@ -272,6 +279,12 @@ describe('structured telemetry views', () => {
     rerender(<Network />);
     expect(screen.queryByText('Loading billing-cycle quota usage…')).toBeNull();
     expect(screen.getByText('2 GB used of 200 GB')).toBeInTheDocument();
+  });
+
+  it('shows a WAN-specific empty state when only LAN counters are reported', () => {
+    fixture.monitor.latest = { ...sample, interfaces: [{ name: 'br-lan', role: 'lan' }] };
+    render(<Interfaces wanOnly />);
+    expect(screen.getByText('No WAN uplink counters reported')).toBeInTheDocument();
   });
 
   it('loads daily traffic past one API page and keeps incomplete current-day totals unavailable', async () => {

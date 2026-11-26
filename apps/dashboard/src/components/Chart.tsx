@@ -245,7 +245,7 @@ export default function Chart({
         name,
         type: 'bar' as const,
         barMaxWidth: isDaily ? 28 : 16,
-        barMinHeight: 2,
+        barMinHeight: 0,
         itemStyle: { color, borderRadius: [2, 2, 0, 0] },
         data: pts,
       });
@@ -280,12 +280,13 @@ export default function Chart({
         for (const row of dailyRows || []) {
           const day = String(row.day || '');
           if (!day) continue;
-          const prev = byDay.get(day) || { rx: null, tx: null };
+          const previous = byDay.get(day) ?? { rx: 0, tx: 0 };
           const rx = num(row.rx_bytes);
           const tx = num(row.tx_bytes);
-          if (rx !== null) prev.rx = (prev.rx ?? 0) + rx;
-          if (tx !== null) prev.tx = (prev.tx ?? 0) + tx;
-          byDay.set(day, prev);
+          byDay.set(day, {
+            rx: previous.rx === null || rx === null ? null : previous.rx + rx,
+            tx: previous.tx === null || tx === null ? null : previous.tx + tx,
+          });
         }
         categories = Array.from(byDay.keys()).sort((a, b) => a.localeCompare(b));
         let maxDayBytes = 0;

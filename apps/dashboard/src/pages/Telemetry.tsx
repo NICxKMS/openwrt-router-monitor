@@ -18,6 +18,7 @@ import {
   sentenceCase,
   serviceCheckLabel,
   sumTrafficBytes,
+  sumWindowTraffic,
   timeRangeKey,
   uptime,
   vmstatLabel,
@@ -61,7 +62,7 @@ function tempTone(t: number | null): 'default' | 'warn' | 'bad' {
 }
 
 export function Overview() {
-  const { latest, device, history, openAlerts, refresh, zone } = useMonitor();
+  const { latest, device, history, openAlerts, refreshAlerts, zone } = useMonitor();
   const memTotal = num(latest?.mem_total_kb);
   const memAvail = num(latest?.mem_available_kb);
   const memPct = memTotal && memAvail !== null ? ((memTotal - memAvail) / memTotal) * 100 : null;
@@ -73,7 +74,7 @@ export function Overview() {
   const coreCount = Object.keys(object(object(detail.cpu).cores)).length;
   const hasTempHistory = tempC !== null || history.some((s) => num(s.temp_c) !== null);
   const criticalAlerts = openAlerts.some((a) => a.severity === 'critical');
-  const windowTraffic = sumTrafficBytes(history);
+  const windowTraffic = sumWindowTraffic(history);
 
   return (
     <>
@@ -109,7 +110,7 @@ export function Overview() {
                     onAction={async (action) => {
                       await ownerApi(`/api/v1/alerts/${a.id}/ack`, undefined, 'POST', action.signal);
                       action.signal.throwIfAborted();
-                      refresh();
+                      refreshAlerts();
                     }}
                   >
                     Acknowledge
@@ -148,7 +149,7 @@ export function Overview() {
           value={rxMbps !== null ? `↓ ${formatMbps(rxMbps)}` : '—'}
           sub={
             txMbps !== null
-              ? `↑ ${formatMbps(txMbps)}${windowTraffic ? ` · Window: ${bytes(windowTraffic.total)}` : ''}`
+              ? `↑ ${formatMbps(txMbps)}${windowTraffic ? ` · ${windowTraffic.approximate ? 'Approx. window' : 'Window'}: ${bytes(windowTraffic.total)}` : ''}`
               : 'Designated internet uplinks only'
           }
         />
@@ -630,7 +631,7 @@ export function Network() {
 
   const rxMbps = rate(latest?.rx_bytes_delta, latest?.elapsed_s);
   const txMbps = rate(latest?.tx_bytes_delta, latest?.elapsed_s);
-  const windowTraffic = sumTrafficBytes(history);
+  const windowTraffic = sumWindowTraffic(history);
   const interfaces = rows(latest?.interfaces);
   const uplinks = interfaces.filter((i) => i.role === 'wan' || i.role === 'usbwan');
 
@@ -651,7 +652,7 @@ export function Network() {
       return { data: observed ?? null, error };
     },
     [device?.id, quotaGb, cycleStartStr, asOfDay],
-    [range.live ? tick : 0],
+    [tick],
   );
 
   const cycleReady = cycleQuery.isCurrent && !cycleQuery.loading && !cycleQuery.error;
@@ -668,7 +669,7 @@ export function Network() {
         <Stat label="Download speed (Rx)" value={formatMbps(rxMbps)} sub={uplinks.length ? uplinks.map((u) => String(u.name)).join(', ') : 'Designated WAN uplinks'} />
         <Stat label="Upload speed (Tx)" value={formatMbps(txMbps)} sub={latest?.elapsed_s ? `Over ${fmt(latest.elapsed_s, ' s', 1)} interval` : 'Designated WAN uplinks'} />
         <Stat
-          label="Consumed in window"
+          label={windowTraffic?.approximate ? "Approx. consumed in window" : "Consumed in window"}
           value={windowTraffic ? bytes(windowTraffic.total) : '—'}
           sub={windowTraffic ? `↓ ${bytes(windowTraffic.rx)} · ↑ ${bytes(windowTraffic.tx)}${windowTraffic.total === null ? ' · incomplete data' : ''}` : 'No WAN deltas in window'}
         />

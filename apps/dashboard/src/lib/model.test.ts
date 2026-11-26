@@ -20,6 +20,7 @@ import {
   sentenceCase,
   serviceCheckLabel,
   sumTrafficBytes,
+  sumWindowTraffic,
   toLocalDateTimeInput,
   uptime,
   vmstatLabel,
@@ -152,4 +153,17 @@ describe('telemetry presentation helpers', () => {
     expect(vmstatLabel('pgmajfault')).toBe('Major page faults');
     expect(vmstatLabel('oom_kill')).toBe('OOM kills');
   });
+});
+
+it('labels boundary-inclusive and legacy window volumes approximate', () => {
+  const complete = { rx_bytes_delta: 7, tx_bytes_delta: 0, traffic_window_exact: true } as Sample;
+  expect(sumWindowTraffic([complete])).toEqual({ rx: 7, tx: 0, total: 7, approximate: false });
+  expect(sumWindowTraffic([complete, { ...complete, traffic_window_exact: false }]))
+    .toEqual({ rx: 14, tx: 0, total: 14, approximate: true });
+  expect(sumWindowTraffic([{ ...complete, traffic_window_exact: undefined }])?.approximate).toBe(true);
+});
+
+it('distinguishes positive sub-kilobit speeds from zero', () => {
+  expect(formatMbps(0)).toBe('0 Mbps');
+  expect(formatMbps(0.0003)).toBe('<1 Kbps');
 });

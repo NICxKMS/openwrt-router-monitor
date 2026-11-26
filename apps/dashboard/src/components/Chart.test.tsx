@@ -77,10 +77,13 @@ it('retains unknown days, measured zero, and small volumes next to GiB values', 
     {day: '2026-11-25', rx_bytes: mixed.rx_bytes_delta, tx_bytes: mixed.tx_bytes_delta},
     {day: '2026-11-26', rx_bytes: null, tx_bytes: 0},
     {day: '2026-11-27', rx_bytes: 0, tx_bytes: null},
+    {day: '2026-11-26', rx_bytes: 512, tx_bytes: 0},
+    {day: '2026-11-27', rx_bytes: 0, tx_bytes: 512},
   ]} />);
   const series = mock.setOption.mock.lastCall?.[0].series;
   expect(series[0].data).toEqual([1, null, 0]);
   expect(series[1].data).toEqual([100000 / 1024 ** 3, 0, null]);
+  expect(series.map((bar: { barMinHeight: number }) => bar.barMinHeight)).toEqual([0, 0]);
   const tooltip = mock.setOption.mock.lastCall?.[0].tooltip.formatter;
   expect(tooltip([{axisValue: '2026-11-25', value: series[1].data[0]}])).toContain('97.7 KiB');
   expect(tooltip([{axisValue: '2026-11-27', value: null}])).toContain('—');
