@@ -34,6 +34,7 @@ import {
   Stat,
 } from '../components/Shared';
 import { ActionButton } from '../components/Actions';
+import { CpuBreakdown, MemoryBreakdown } from '../components/SystemDetail';
 
 function cpuTone(v: number | null): 'accent' | 'warn' | 'bad' {
   if (v === null) return 'accent';
@@ -327,6 +328,8 @@ export function CPU() {
         <Processes />
       </div>
 
+      <CpuBreakdown detail={detail} />
+
       <div className="two-col">
         <Card
           title="Thermal zones"
@@ -503,6 +506,8 @@ export function Memory() {
       <MemorySummaryStrip sample={latest} />
 
       <HistoryChart metric="mem_available_mib" title="Available memory" unit=" MiB" allowMemoryToggle />
+
+      <MemoryBreakdown memory={memDetail} />
 
       <div className="two-col">
         <Card
@@ -957,7 +962,7 @@ export function DNS() {
         >
           <div className="stack">
             <div className="service-grid">
-              {['dnsmasq', 'https-dns-proxy', 'odhcpd'].map((svc) => {
+              {['dnsmasq', 'https-dns-proxy', 'odhcpd', ...(services.adguardhome !== undefined ? ['adguardhome'] : [])].map((svc) => {
                 const state = services[svc];
                 return (
                   <div className="service-tile" key={svc}>
@@ -1103,7 +1108,7 @@ function Processes() {
   return (
     <Card
       title="Top processes (RSS)"
-      description="Periodic snapshot of largest resident memory processes. RSS includes shared pages."
+      description="Largest processes by RSS. PSS divides shared pages among the processes using them."
       action={<CollectorLag uptimeKey="processes_uptime_s" label="Processes" />}
     >
       {processes.length ? (
@@ -1113,6 +1118,11 @@ function Processes() {
             { key: 'name', label: 'Process', render: (v) => <code>{String(v ?? '—')}</code> },
             { key: 'pid', label: 'PID', render: (v) => <span className="mono muted">{String(v ?? '—')}</span> },
             { key: 'rss_kb', label: 'Resident RAM', render: (v) => <span className="mono">{mib(num(v))}</span> },
+            { key: 'pss_kb', label: 'Proportional RAM', render: (v) => mib(num(v)) },
+            { key: 'pss_anon_kb', label: 'Anonymous PSS', render: (v) => mib(num(v)) },
+            { key: 'pss_file_kb', label: 'File PSS', render: (v) => mib(num(v)) },
+            { key: 'pss_shmem_kb', label: 'Shared memory PSS', render: (v) => mib(num(v)) },
+            { key: 'swap_pss_kb', label: 'Swap PSS', render: (v) => mib(num(v)) },
             {
               key: 'share',
               label: '% of RAM',

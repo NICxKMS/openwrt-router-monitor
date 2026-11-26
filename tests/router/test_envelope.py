@@ -101,6 +101,28 @@ printf '%s\n' "$ud"
         self.assertIn('processes',sample['detail'])
         self.assertLess(len(json.dumps(sample['detail']).encode()),16384)
 
+    def test_device_tree_memory_reports_sizes_without_addresses(self):
+        root = self.state/'devicetree'
+        region = root/'reserved-memory'/'q6@4b000000'
+        memory = root/'memory@40000000'
+        disabled = root/'reserved-memory'/'unused@4f000000'
+        for node in (region, memory, disabled):
+            node.mkdir(parents=True)
+        for node in (root, region.parent):
+            for name in ('#address-cells', '#size-cells'):
+                (node/name).write_bytes(bytes.fromhex('00000002'))
+        (memory/'device_type').write_bytes(b'memory\0')
+        (memory/'reg').write_bytes(bytes.fromhex('00000000400000000000000020000000'))
+        (region/'reg').write_bytes(bytes.fromhex('000000004b0000000000000002b00000'))
+        (region/'no-map').touch()
+        (disabled/'reg').write_bytes(bytes.fromhex('000000004f0000000000000000100000'))
+        (disabled/'status').write_bytes(b'disabled\0')
+        result = json.loads(self.shell('json_init; collect_device_tree_memory "$STATE/devicetree"; json_dump'))
+        self.assertEqual(result, {
+            'dt_ram_bytes': 512*1024*1024,
+            'reservations': [{'name': 'q6', 'bytes': 43*1024*1024, 'no_map': True}],
+        })
+
     def test_slow_detail_is_sparse_on_subsequent_samples(self):
         output=self.shell('collect_detail;collect_processes;collect_wifi;collect_connectivity;collect_sample;collect_sample;cat "$STATE/sample"')
         sample=json.loads(output)

@@ -30,12 +30,42 @@ collect_network() {
         mv "$STATE/network.new" "$STATE/network.json"
 }
 collect_processes() {
+    local pss field value count=0 rss pid name cpu
     # RSS is not unique memory (shared pages can be counted by multiple processes).
-    awk '/^Name:/{name=$2} /^Pid:/{pid=$2} /^VmRSS:/{if(name ~ /^[a-zA-Z0-9_.:-]+$/)print $2,pid,name}' /proc/[0-9]*/status 2>/dev/null | sort -nr | head -n 12 > "$STATE/process.input"
+    timeout 3 awk '/^Name:/{name=$2} /^Pid:/{pid=$2} /^VmRSS:/{if(name ~ /^[a-zA-Z0-9_.:-]+$/)print $2,pid,name}' /proc/[0-9]*/status 2>/dev/null | sort -nr | head -n 12 > "$STATE/process.input"
+    timeout 3 cat /proc/stat /proc/[0-9]*/stat 2>/dev/null | head -c 262144 |
+        awk -v state="$STATE/process-cpu.previous" -f "$LIB/process-cpu.awk" |
+        sort -nr | head -n 8 > "$STATE/process-cpu.input"
+    if [ -f "$STATE/process-cpu.previous.new" ]; then
+        mv "$STATE/process-cpu.previous.new" "$STATE/process-cpu.previous"
+    fi
     json_init;json_add_array processes
     while read -r rss pid name;do
-        json_add_object '';json_add_string name "$name";json_add_int pid "$pid";json_add_int rss_kb "$rss";json_close_object
+        number "$pid" || continue
+        json_add_object '';json_add_string name "$name";json_add_int pid "$pid";json_add_int rss_kb "$rss"
+        count=$((count+1))
+        if [ "$count" -le 8 ] && [ -r "/proc/$pid/smaps_rollup" ]; then
+            pss=$(timeout 1 awk '
+                /^Pss:/ {print "pss_kb", $2}
+                /^Pss_Anon:/ {print "pss_anon_kb", $2}
+                /^Pss_File:/ {print "pss_file_kb", $2}
+                /^Pss_Shmem:/ {print "pss_shmem_kb", $2}
+                /^SwapPss:/ {print "swap_pss_kb", $2}
+            ' "/proc/$pid/smaps_rollup" 2>/dev/null)
+            if [ -n "$pss" ]; then
+                while read -r field value; do
+                    diagnostic_uint "$value" && json_add_int "$field" "$value"
+                done <<EOF_PSS
+$pss
+EOF_PSS
+            fi
+        fi
+        json_close_object
     done < "$STATE/process.input"
+    json_close_array;json_add_array processes_cpu
+    while read -r cpu pid name; do
+        json_add_object '';json_add_string name "$name";json_add_int pid "$pid";json_add_double cpu_pct "$cpu";json_close_object
+    done < "$STATE/process-cpu.input"
     json_close_array;uptime_now;json_add_double processes_uptime_s "$uptime";json_dump > "$STATE/process.new";mv "$STATE/process.new" "$STATE/process.json";: > "$STATE/process.dirty"
 }
 detect_policy_services() {
@@ -87,13 +117,15 @@ procd_service_status() {
         END{if(running)print "true";else if(stopped)print "false";else exit 1}
     '
 }
+. "$LIB/system-detail.sh"
+
 collect_detail() {
     detect_policy_services
     json_init
     json_add_object memory
     json_add_object vmstat
     while read -r key value;do
-        case "$key" in pgfault|pgmajfault|pswpin|pswpout|oom_kill|pgscan_kswapd|pgsteal_kswapd)json_add_string "$key" "$value";;esac
+        case "$key" in pgfault|pgmajfault|pswpin|pswpout|oom_kill|pgscan_kswapd|pgsteal_kswapd|pgscan_direct|pgsteal_direct|allocstall_*|compact_fail|compact_success|workingset_refault_anon|workingset_refault_file)json_add_string "$key" "$value";;esac
     done < /proc/vmstat
     json_close_object
     json_add_object psi
@@ -112,7 +144,10 @@ collect_detail() {
         done < "/proc/pressure/$kind"
         json_close_object
     done
-    json_close_object;json_close_object
+    json_close_object
+    collect_memory_diagnostics /proc /sys
+    json_close_object
+    collect_cpu_diagnostics
     json_add_array thermal
     count=0
     for path in /sys/class/thermal/thermal_zone*/temp;do
@@ -146,7 +181,7 @@ collect_detail() {
     json_close_object
     json_add_object services
     # Existence/running status only; do not export service command lines or config.
-    for service in dnsmasq odhcpd sysntpd https-dns-proxy hostapd rpcd network uhttpd;do
+    for service in dnsmasq odhcpd sysntpd https-dns-proxy adguardhome hostapd rpcd network uhttpd;do
         [ -x "/etc/init.d/$service" ] || continue
         case "$(procd_service_status "$service")" in
             true)json_add_boolean "$service" 1;;
@@ -165,7 +200,6 @@ collect_detail() {
     json_add_string wifi "$(command -v iw >/dev/null && echo available || echo 'unavailable: install iw')"
     json_add_string debugfs 'disabled: no debugfs reads or changes'
     json_add_string ppe 'unavailable: no stable driver-independent counter ABI'
-    json_add_string slab_attribution 'unavailable: per-cache attribution not collected'
     json_add_string dns_counters 'unavailable: no stable dnsmasq counter ABI without query logging'
     json_add_string dns_queries 'disabled: privacy policy'
     json_close_object
@@ -273,7 +307,7 @@ collect_connectivity() {
 }
 collect_sample() {
     uptime_now;clock_now
-    awk -v state="$STATE/cpu.previous" -f "$LIB/cpu.awk" /proc/stat > "$STATE/cpu.json"
+    awk -v state="$STATE/cpu.previous" -v sample=1 -f "$LIB/cpu.awk" /proc/stat > "$STATE/cpu.json"
     awk -f "$LIB/memory.awk" /proc/meminfo > "$STATE/memory.json"
     collect_network
     read -r load rest < /proc/loadavg
@@ -283,8 +317,9 @@ collect_sample() {
     printf '{"seq":%s,"uptime_s":%s,"observed_at":%s,"load1":%s,"temp_c":%s,' "$seq" "$uptime" "$observed_at" "$load" "$temp" > "$STATE/sample"
     for part in memory network;do read -r fragment < "$STATE/$part.json";fragment=${fragment#\{};fragment=${fragment%\}};printf '%s,' "$fragment" >> "$STATE/sample";done
     cpu=$(jsonfilter -i "$STATE/cpu.json" -e '@.cpu_pct')
-    cores=$(jsonfilter -i "$STATE/cpu.json" -e '@.cores')
-    printf '"cpu_pct":%s,"detail":{"cpu":{"cores":%s}' "${cpu:-null}" "${cores:-\{\}}" >> "$STATE/sample"
+    read -r fragment < "$STATE/cpu.json"
+    fragment=${fragment#\{}
+    printf '%s' "${fragment%\}\}}" >> "$STATE/sample"
     printf ',"meminfo":' >> "$STATE/sample";cat "$STATE/memory.json" >> "$STATE/sample"
     # Alert duration and freshness checks need the locally effective collection cadence.
     # Keep it in the base sample even when extended collector data exceeds its bound.
