@@ -1,6 +1,6 @@
 # Contributing
 
-Work from a short-lived `codex/…`, `feat/…` or `fix/…` branch and open a pull request against `main`. Keep commits focused, describe the user-visible behavior, and include relevant verification. Preserve unrelated firmware workspace edits. Never commit `.env.local`, Worker secrets, router credentials, private diagnostics, build trees or package binaries.
+Work from a short-lived `codex/…`, `feat/…` or `fix/…` branch and open a pull request against `codex/nicx-router-monitor`. Keep commits focused, describe the user-visible behavior, and include relevant verification. Preserve unrelated firmware workspace edits. Never commit `.env.local`, Worker secrets, router credentials, private diagnostics, build trees or package binaries.
 
 From this directory, run `pnpm install --frozen-lockfile`, `pnpm preflight`, `pnpm test`, `pnpm typecheck`, `pnpm test:database`, `pnpm test:router` and `pnpm build`. Browser checks use `pnpm exec playwright install chromium` then `pnpm test:browser`. CI additionally builds the pinned native OpenWrt JSON helper, runs the BusyBox tests and ingests a host-generated fixture into its local test database. Fixture data never goes to production.
 

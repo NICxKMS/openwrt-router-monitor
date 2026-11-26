@@ -47,7 +47,7 @@ All contract tables exist, with RLS enabled on every public table. Browser reads
 
 Hidden credential, deduplication, rate-limit, alert-state, accounting, and queue tables live in `private`, with RLS and no browser schema access. Their RLS bypass is limited to the trusted function owner/service role. Device deletion cascades through its relational telemetry. A diagnostic delete trigger puts the object path in an independent private deletion outbox, which survives device deletion. The Worker deletes files using the Storage API and acknowledges the outbox; deleting SQL metadata alone does not delete an object.
 
-Additional columns preserve correctness: rollups have independent CPU, available-memory and temperature non-null counts; boot sessions retain sample/log eviction sequence watermarks and an inferred uptime origin; raw samples retain `effective_at`; devices expose cumulative `dropped_samples`, `dropped_logs` and `storage_degraded_at`. No second browser Realtime feed is published.
+Additional columns preserve correctness: rollups have independent CPU, available-memory, temperature and directional network delta counts; boot sessions retain sample/log eviction sequence watermarks and an inferred uptime origin; raw samples retain `effective_at`; devices expose cumulative `dropped_samples`, `dropped_logs` and `storage_degraded_at`. No second browser Realtime feed is published.
 
 ## Ingestion and ordering
 
@@ -59,7 +59,7 @@ Receipt time always updates `last_seen_at`, including authenticated duplicate re
 
 An unknown boot arriving for the first time is treated as the current boot by first receipt. Without trustworthy wall time, a never-before-seen delayed boot cannot be distinguished from a real new boot. This is an explicit inference, not proof of reboot chronology. Synchronized observations within three days and five minutes future tolerance use device time; otherwise an uptime origin anchored to first receipt is used, clamped to receipt time. Unsynchronized absolute history is estimated, while sequence/uptime order remains explicit. `observed_at` retains the actual null/clock state.
 
-Every newly inserted sample adds once to minute/15-minute/hour/day rollups. Averages divide gauge sums by that gauge's non-null count. All-null metrics stay null. Network totals sum valid deltas and preserve null on wholly unknown traffic; resets do not become zero traffic. WAN and USB WAN have separate per-interface UTC daily rows; LAN/other interfaces never enter Internet totals. Deltas crossing midnight are assigned to the observation end day rather than inventing within-interval traffic distribution.
+Every newly inserted sample adds once to minute/15-minute/hour/day rollups. Averages divide gauge sums by that gauge's non-null count. All-null metrics stay null. Network rollups sum valid deltas and expose independent Rx/Tx counts. The dashboard suppresses a directional window total when a bucket is incomplete. Migration 009 backfills counts only for buckets whose complete raw observations remain. Reset-only traffic stays unavailable. WAN and USB WAN have separate per-interface UTC daily rows; LAN/other interfaces never enter Internet totals. Deltas crossing midnight are assigned to the observation end day rather than inventing within-interval traffic distribution.
 
 ## Alerts
 

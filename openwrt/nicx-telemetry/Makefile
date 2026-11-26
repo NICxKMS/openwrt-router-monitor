@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=nicx-telemetry
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=4
+PKG_RELEASE:=9
 PKG_LICENSE:=MIT
 PKGARCH:=all
 

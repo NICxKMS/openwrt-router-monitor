@@ -5,7 +5,7 @@ import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import type {TimeRange} from '../lib/model';
 const fixture=vi.hoisted(()=>({monitor:{} as Record<string,unknown>,queries:vi.fn(),response:null as Promise<{data:unknown[]|null;error:{message:string}|null}>|null}));
-vi.mock('../lib/client',()=>({ownerApi:vi.fn(),db:{from:(table:string)=>{const data=Array.from({length:table==='system_logs'?51:21},(_,index)=>({id:`row-${index}`,device_id:'device-a',boot_id:'boot-a',received_at:'2026-11-25T01:00:00Z',created_at:'2026-11-25T01:00:00Z',severity:5,service:'fixture',message:'Synthetic test observation',count:1,payload:{fixture:true},object_path:null}));const builder:Record<string,unknown>={then:(resolve:(value:unknown)=>unknown,reject:(error:unknown)=>unknown)=>(fixture.response||Promise.resolve({data,error:null})).then(resolve,reject)};for(const method of ['select','eq','gte','lte','order','limit','or','ilike','range'])builder[method]=(...args:unknown[])=>{fixture.queries(table,method,...args);return builder;};return builder;}}}));
+vi.mock('../lib/client',()=>({ownerApi:vi.fn(),db:{from:(table:string)=>{const data=Array.from({length:table==='system_logs'?51:21},(_,index)=>({id:`row-${index}`,device_id:'device-a',boot_id:'boot-a',received_at:'2026-11-25T01:00:00Z',created_at:'2026-11-25T01:00:00Z',severity:5,service:'fixture',message:'Synthetic test observation',count:1,payload:{fixture:true,packages:'base-files - 1'},object_path:null}));const builder:Record<string,unknown>={then:(resolve:(value:unknown)=>unknown,reject:(error:unknown)=>unknown)=>(fixture.response||Promise.resolve({data,error:null})).then(resolve,reject)};for(const method of ['select','eq','gte','lte','order','limit','or','ilike','range'])builder[method]=(...args:unknown[])=>{fixture.queries(table,method,...args);return builder;};return builder;}}}));
 vi.mock('../lib/data',async importOriginal=>({...await importOriginal<typeof import('../lib/data')>(),useMonitor:()=>fixture.monitor}));
 import {Diagnostics,Logs} from './Records';
 const initialRange:TimeRange={from:'2026-11-24T20:00:00Z',to:'2026-11-25T02:00:00Z',live:true,hours:6};
@@ -15,6 +15,23 @@ function advanceLiveRange(){fixture.monitor={...fixture.monitor,range:{...initia
 describe('stable bounded pagination',()=>{
  it('keeps the log cursor and freezes its bounds while a live clock advances',async()=>{const view=render(<Logs/>);await waitFor(()=>expect(screen.getByRole('button',{name:'Next 50'})).not.toBeDisabled());fireEvent.click(screen.getByRole('button',{name:'Next 50'}));await waitFor(()=>expect(screen.getByText(/Page 2/)).toBeTruthy());advanceLiveRange();view.rerender(<Logs/>);await waitFor(()=>expect(screen.getByText(/Page 2/)).toBeTruthy());expect(screen.getByText(/window fixed while paging/)).toBeTruthy();expect(fixture.queries).not.toHaveBeenCalledWith('system_logs','gte','received_at','2026-11-24T20:00:30Z');fixture.monitor={...fixture.monitor,range:{...initialRange,hours:24}};view.rerender(<Logs/>);await waitFor(()=>expect(screen.getByText(/Page 1/)).toBeTruthy());});
  it('keeps the diagnostic page during live refresh and releases bounds on return',async()=>{const view=render(<Diagnostics/>);await waitFor(()=>expect(screen.getByRole('button',{name:'Next'})).not.toBeDisabled());fireEvent.click(screen.getByRole('button',{name:'Next'}));await waitFor(()=>expect(screen.getByText(/Page 2/)).toBeTruthy());advanceLiveRange();view.rerender(<Diagnostics/>);await waitFor(()=>expect(screen.getByText(/Page 2/)).toBeTruthy());expect(fixture.queries).not.toHaveBeenCalledWith('diagnostics','gte','created_at','2026-11-24T20:00:30Z');fireEvent.click(screen.getByRole('button',{name:'Previous'}));await waitFor(()=>expect(screen.getByText(/Page 1/)).toBeTruthy());expect(fixture.queries).toHaveBeenCalledWith('diagnostics','gte','created_at','2026-11-24T20:00:30Z');});
+});
+
+it('keeps opened diagnostic accordions expanded when live polling refreshes rows', async () => {
+  const view = render(<Diagnostics />);
+  await waitFor(() => expect(screen.getAllByText(/Received in cloud/).length).toBeGreaterThan(0));
+  const firstDetails = document.querySelector('details.record') as HTMLDetailsElement;
+  fireEvent.click(firstDetails.querySelector('summary')!);
+  expect(firstDetails.open).toBe(true);
+  fireEvent.click(screen.getAllByText(/Installed packages/)[0]);
+  let resolve!: (value: { data: unknown[]; error: null }) => void;
+  fixture.response = new Promise((done) => { resolve = done; });
+  fixture.monitor = { ...fixture.monitor, tick: 1, range: { ...initialRange, from: '2026-11-24T20:00:30Z', to: '2026-11-25T02:00:30Z' } };
+  view.rerender(<Diagnostics />);
+  resolve({ data: [{ id: 'row-0', device_id: 'device-a', boot_id: 'boot-a', created_at: '2026-11-25T01:00:00Z', object_path: null, payload: { packages: 'refreshed-package - 2' } }], error: null });
+  await screen.findByText('refreshed-package - 2');
+  expect((document.querySelector('details.record') as HTMLDetailsElement).open).toBe(true);
+  expect((screen.getByText(/Installed packages/).closest('details') as HTMLDetailsElement).open).toBe(true);
 });
 
 for(const [name,Page] of [['logs',Logs],['diagnostics',Diagnostics]] as const){

@@ -252,12 +252,16 @@ terminate_roots() {
     owned_roots=''
     for child in $child_roots;do if child_alive "$child";then owned_roots="$owned_roots $child";kill -STOP "$child" 2>/dev/null;fi;done
     child_roots=$owned_roots
-    tree=$(awk -v roots="$child_roots" '
-        {pid=$1;sub(/^.*\) /,"");parent[pid]=$2}
-        END{n=split(roots,r," ");for(i=1;i<=n;i++)if(r[i]~/^[0-9]+$/)inside[r[i]]=1;
-        for(pass=0;pass<16;pass++)for(k in parent)if(parent[k] in inside)inside[k]=1;
-        for(k in inside)printf "%s ",k}' /proc/[0-9]*/stat 2>/dev/null)
-    [ -z "$tree" ] || kill -KILL $tree 2>/dev/null
+    tree=$(
+        for stat_file in /proc/[0-9]*/stat;do
+            { IFS= read -r stat_line < "$stat_file" && printf '%s\n' "$stat_line"; } 2>/dev/null
+        done | awk -v roots="$child_roots" '
+            {pid=$1;sub(/^.*\) /,"");parent[pid]=$2}
+            END{n=split(roots,r," ");for(i=1;i<=n;i++)if(r[i]~/^[0-9]+$/)inside[r[i]]=1;
+            for(pass=0;pass<16;pass++)for(k in parent)if(parent[k] in inside)inside[k]=1;
+            for(k in inside)printf "%s ",k}'
+    )
+    [ -z "$child_roots$tree" ] || kill -KILL $child_roots $tree 2>/dev/null
     for child in $child_roots;do wait "$child" 2>/dev/null;done
 }
 cleanup() {

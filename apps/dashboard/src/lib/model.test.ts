@@ -8,6 +8,7 @@ import {
   date,
   durationShort,
   fmt,
+  formatMbps,
   matchUptimeWindows,
   memoryCategories,
   mib,
@@ -18,6 +19,8 @@ import {
   safeCsv,
   sentenceCase,
   serviceCheckLabel,
+  sumTrafficBytes,
+  sumWindowTraffic,
   toLocalDateTimeInput,
   uptime,
   vmstatLabel,
@@ -57,6 +60,19 @@ describe('honest measurement formatting', () => {
   it('uses the selected timezone rather than the browser timezone', () => {
     expect(date('2026-11-25T00:00:00Z', 'Asia/Kolkata')).toContain('05:30');
     expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 6 * 3600000)).toBe('05:30');
+    expect(compactAxisTime(Date.parse('2026-11-25T00:00:15Z'), 'Asia/Kolkata', 15 * 60000)).toBe('05:30:15');
+    expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 30 * 86400000)).toBe('25 Nov');
+    expect(compactAxisTime(Date.parse('2026-11-25T00:00:00Z'), 'Asia/Kolkata', 400 * 86400000)).toBe('25 Nov 2026');
+    expect(rate('12500000', '10')).toBe(10);
+    expect(formatMbps(0.005)).toBe('5 Kbps');
+    expect(formatMbps(0.42)).toBe('0.42 Mbps');
+    expect(formatMbps(2)).toBe('2 Mbps');
+    expect(sumTrafficBytes([{ rx_bytes_delta: null, tx_bytes_delta: null } as Sample])).toBeNull();
+    expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: null } as Sample])).toEqual({ rx: 300, tx: null, total: null });
+    expect(sumTrafficBytes([{ rx_bytes_delta: 0, tx_bytes_delta: 0 } as Sample])).toEqual({ rx: 0, tx: 0, total: 0 });
+    expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: 100 } as Sample])).toEqual({ rx: 300, tx: 100, total: 400 });
+    expect(sumTrafficBytes([{ rx_bytes_delta: 300, tx_bytes_delta: 100, sample_count: 2,
+      rx_delta_count: 1, tx_delta_count: 2 } as Sample])).toEqual({ rx: null, tx: 100, total: null });
   });
 });
 
@@ -137,4 +153,17 @@ describe('telemetry presentation helpers', () => {
     expect(vmstatLabel('pgmajfault')).toBe('Major page faults');
     expect(vmstatLabel('oom_kill')).toBe('OOM kills');
   });
+});
+
+it('labels boundary-inclusive and legacy window volumes approximate', () => {
+  const complete = { rx_bytes_delta: 7, tx_bytes_delta: 0, traffic_window_exact: true } as Sample;
+  expect(sumWindowTraffic([complete])).toEqual({ rx: 7, tx: 0, total: 7, approximate: false });
+  expect(sumWindowTraffic([complete, { ...complete, traffic_window_exact: false }]))
+    .toEqual({ rx: 14, tx: 0, total: 14, approximate: true });
+  expect(sumWindowTraffic([{ ...complete, traffic_window_exact: undefined }])?.approximate).toBe(true);
+});
+
+it('distinguishes positive sub-kilobit speeds from zero', () => {
+  expect(formatMbps(0)).toBe('0 Mbps');
+  expect(formatMbps(0.0003)).toBe('<1 Kbps');
 });

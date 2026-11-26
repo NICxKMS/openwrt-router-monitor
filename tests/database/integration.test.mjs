@@ -30,6 +30,8 @@ before(async()=>{
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250006_diagnostic_receipts.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250007_alert_continuity.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../supabase/migrations/202611250008_backend_review.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../supabase/migrations/202611260009_traffic_delta_counts.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../supabase/migrations/202611260010_traffic_window_precision.sql',import.meta.url),'utf8'));
  await db.exec(`insert into public.enrollment_tokens(owner_id,token_hash,expires_at,name) values ('${owner}','${'e'.repeat(64)}',now()+interval '5 minutes','test');`);
  device=(await rpc('enroll_device',['e'.repeat(64),token,'test','fixture'])).device_id;
 });
@@ -149,20 +151,39 @@ test('history uses minute rollups for incomplete raw buckets inside the configur
  const time=(offset)=>new Date(started+offset*1000);
  try{
   for(const [seq,offset,cpu] of [[1,12,20],[2,22,50],[3,72,90]]){
-   await q('insert into public.metric_samples(device_id,boot_id,seq,effective_at,uptime_s,cpu_pct) values($1,$2,$3,$4,$5,$6)',[id,boot,seq,time(offset),offset,cpu]);
+   await q('insert into public.metric_samples(device_id,boot_id,seq,effective_at,uptime_s,cpu_pct,rx_bytes_delta,tx_bytes_delta,elapsed_s) values($1,$2,$3,$4,$5,$6,$7,$8,$9)',[id,boot,seq,time(offset),offset,cpu,seq===1 ? 100000 : null,seq===1 ? 0 : null,seq===1 ? 20 : null]);
    await q('select private.accumulate_sample(s) from public.metric_samples s where device_id=$1 and seq=$2',[id,seq]);
   }
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${owner}'`);
   const raw=await rpc('history',[id,time(10),time(90)]);
   assert.deepEqual(raw.map(x=>Number(x.sample_count)),[1,1,1]);
+  assert.deepEqual(raw.map(x=>Number(x.rx_delta_count)),[1,0,0]);
+  assert.equal(raw[0].traffic_window_exact, false);
+  const containedRaw = await rpc('history',[id,time(-10),time(90)]);
+  assert.equal(containedRaw[0].traffic_window_exact, true);
   await db.exec('reset role');
   await q('delete from public.metric_samples where device_id=$1 and seq=1',[id]);
   await db.exec(`set role authenticated; set request.jwt.claim.sub='${owner}'`);
   const minute=await rpc('history',[id,time(10),time(90)]);
   assert.deepEqual(minute.map(x=>[Number(x.sample_count),x.cpu_pct]),[[2,35],[1,90]]);
+  assert.deepEqual(minute.map(x=>[Number(x.rx_delta_count),Number(x.tx_delta_count)]),[[1,1],[0,0]]);
+  assert.equal(Number(minute[0].rx_bytes_delta),100000);
+  assert.deepEqual(minute.map(x=>x.traffic_window_exact),[false,false]);
+  const aligned=await rpc('history',[id,time(0),time(120)]);
+  assert.deepEqual(aligned.map(x=>x.traffic_window_exact),[false,false]);
   const laterRaw=await rpc('history',[id,time(60),time(90)]);
   assert.deepEqual(laterRaw.map(x=>new Date(x.bucket).valueOf()),[time(72).valueOf()]);
  }finally{await db.exec('reset role');await q('delete from public.devices where id=$1',[id]);}
+});
+test('history rejects non-owners and invalid ranges', async () => {
+ await db.exec(`set role authenticated; set request.jwt.claim.sub='${other}'`);
+ const from = new Date('2026-11-25T00:00:00Z');
+ const to = new Date('2026-11-26T00:00:00Z');
+ await assert.rejects(rpc('history',[device,from,to]), { code: '42501' });
+ await db.exec(`set request.jwt.claim.sub='${owner}'`);
+ await assert.rejects(rpc('history',[device,null,to]), { code: '22023' });
+ await assert.rejects(rpc('history',[device,to,from]), { code: '22023' });
+ await assert.rejects(rpc('history',[device,from,new Date('2028-01-01T00:00:00Z')]), { code: '22023' });
 });
 test('history returns a minute bucket if complete raw data exceeds the response limit',async()=>{
  const id=(await q('insert into public.devices(owner_id,name) values($1,$2) returning id',[owner,'DENSE HISTORY FIXTURE']))[0].id;

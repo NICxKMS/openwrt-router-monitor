@@ -11,6 +11,7 @@ Scope: this directory only. The parent firmware workspace has unrelated user edi
 | `codex/nicx-router-monitor` | Nicx Router Monitor development and integration. | Long-lived. |
 | `router_monitor_ui_audit` | Audit Nicx Router Monitor and fix findings. | Temporary. Delete once all fixes are merged and verified on `codex/nicx-router-monitor`. |
 | `codex/jidu6111-thinlto-drivers` | JIDU6111 ThinLTO firmware profiles and Qualcomm driver fixes. | Temporary. Delete after its PR lands on `main` and the build is verified. |
+| `codex/jidu-deep-monitoring` | Detailed router memory and CPU telemetry. | Temporary. Delete when its PR has merged and the firmware feed pin remains reachable. |
 
 - When creating a branch, add it to this table with its purpose and intended lifecycle. Mark it as long-lived or temporary. For a temporary branch, specify the date or condition for deletion.
 - Open and merge all Nicx Router Monitor pull requests with `codex/nicx-router-monitor` as the only base branch. This includes audit fixes and monitoring-specific repository files such as `.github/workflows/nicx-router-monitor.yml`.

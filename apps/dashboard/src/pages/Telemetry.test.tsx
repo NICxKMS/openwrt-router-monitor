@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import React from 'react';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Row } from '../lib/model';
 
@@ -54,8 +54,9 @@ vi.mock('../lib/data', async (importOriginal) => ({
 // Page tests verify telemetry around the chart. Canvas rendering runs in Playwright.
 vi.mock('../components/Chart', () => ({ default: () => null }));
 
-import { CPU, DNS, Network, Overview, WiFi } from './Telemetry';
+import { CPU, DNS, Memory, Network, Overview, WiFi } from './Telemetry';
 import { ActionProvider } from '../components/Actions';
+import { Interfaces } from '../components/Shared';
 
 const sample = {
   uptime_s: 3600,
@@ -249,6 +250,57 @@ describe('structured telemetry views', () => {
     rerender(<Network />);
     await waitFor(() => expect(screen.getAllByText('2026-01-30')).toHaveLength(4));
     expect(screen.getByText('124 GB used of 200 GB')).toBeInTheDocument();
+
+    fixture.bandwidthDaily[0].rx_bytes = 1_900_000_000;
+    fixture.monitor.tick = 1;
+    rerender(<Network />);
+    expect(await screen.findByText('125 GB used of 200 GB')).toBeInTheDocument();
+  });
+
+  it('separates speed and consumed traffic stats on Network without flashing quota loading on poll', async () => {
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    fixture.monitor = {
+      ...fixture.monitor,
+      device: { id: 'dev-1', name: 'JIDU6111', model: 'JioRouter AX6000', config: { monthly_quota_gb: 200, billing_day: 1 } },
+      history: [
+        { ...sample, rx_bytes_delta: 5_242_880, tx_bytes_delta: 1_048_576, elapsed_s: 10 },
+        { ...sample, rx_bytes_delta: 5_242_880, tx_bytes_delta: 1_048_576, elapsed_s: 10 },
+      ],
+    };
+    fixture.bandwidthDaily = [{ device_id: 'dev-1', day: '2026-11-25', interface_name: 'eth0', role: 'wan', rx_bytes: 2_000_000_000, tx_bytes: 0 }];
+    const { rerender } = render(<Network />);
+    expect(await screen.findByText('2 GB used of 200 GB')).toBeInTheDocument();
+    expect(screen.getAllByText('12 MiB').length).toBeGreaterThan(0);
+    expect(screen.getByText('Approx. consumed in window')).toBeInTheDocument();
+    expect(screen.getByText('Approx. downloaded (↓)')).toBeInTheDocument();
+    expect(screen.getByText('Approx. uploaded (↑)')).toBeInTheDocument();
+    expect(screen.getByText('Internet speed (Rx & Tx)')).toBeInTheDocument();
+    expect(screen.getByText('Data consumed per interval')).toBeInTheDocument();
+
+    fixture.monitor = { ...fixture.monitor, tick: 1 };
+    rerender(<Network />);
+    expect(screen.queryByText('Loading billing-cycle quota usage…')).toBeNull();
+    expect(screen.getByText('2 GB used of 200 GB')).toBeInTheDocument();
+  });
+
+  it('shows a WAN-specific empty state when only LAN counters are reported', () => {
+    fixture.monitor.latest = { ...sample, interfaces: [{ name: 'br-lan', role: 'lan' }] };
+    render(<Interfaces wanOnly />);
+    expect(screen.getByText('No WAN uplink counters reported')).toBeInTheDocument();
+  });
+
+  it('loads daily traffic past one API page and keeps incomplete current-day totals unavailable', async () => {
+    vi.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+    fixture.monitor.range = {from: '2026-11-24T12:00:00Z', to: '2026-11-25T12:00:00Z', live: false, hours: 24};
+    fixture.bandwidthDaily = Array.from({ length: 1000 }, (_, index) => ({
+      device_id: 'dev-1', day: '2026-11-24', interface_name: `fixture-${index}`, role: 'wan', rx_bytes: 0, tx_bytes: 0,
+    }));
+    fixture.bandwidthDaily.push({
+      device_id: 'dev-1', day: '2026-11-25', interface_name: 'fixture-last', role: 'wan', rx_bytes: 1024, tx_bytes: null,
+    });
+    render(<Network />);
+    expect(await screen.findByText('fixture-last')).toBeInTheDocument();
+    expect(screen.getByText('↓ 1 KiB · ↑ — · incomplete data')).toBeInTheDocument();
   });
 
   it('hides the previous quota usage from the first render for another router', async () => {
@@ -277,5 +329,44 @@ describe('structured telemetry views', () => {
     rerender(<QuotaRender />);
     expect(commits.at(-1)).toContain('— used of 100 GB');
     expect(await screen.findByText('1 GB used of 100 GB')).toBeInTheDocument();
+  });
+});
+
+describe('deep system telemetry', () => {
+  it('exposes the RAM counter difference and reservations as separate measurements', () => {
+    fixture.monitor = {
+      latest: { ...sample, detail: { ...sample.detail, memory: {
+        accounting_kb: { total: 409600, free: 102400, counter_difference: 2048, measured_categories: 407552 },
+        reservations: [
+          { id: 'reservation-1', name: 'q6-region', bytes: 45088768, no_map: true },
+          { id: 'reservation-2', name: 'q6-region', bytes: 1048576 },
+        ],
+        allocinfo: [{ name: 'drivers/net/ethernet/qualcomm/ppe/ppe.c:123', allocated_bytes: 4096, allocations: '2' }],
+      } } },
+      history: [], zone: 'Asia/Kolkata',
+    };
+    render(<Memory />);
+    expect(screen.getByRole('row', { name: 'Counter difference 2 MiB' })).toBeInTheDocument();
+    expect(screen.getAllByText('q6-region')).toHaveLength(2);
+    expect(screen.getByRole('row', { name: /ppe\.c:123 4 KiB 2/ })).toBeInTheDocument();
+  });
+
+  it('shows per-core CPU states and task CPU independently of resident RAM', () => {
+    fixture.monitor = {
+      latest: { ...sample, detail: { ...sample.detail,
+        cpu: { ...sample.detail.cpu, modes: { user: 10, idle: 70, softirq: 20 },
+          core_modes: { cpu0: [7, 0, 0, 73, 0, 0, 20, 0, 0, 0] } },
+        detail_uptime_s: 3500,
+        processes_cpu: [{ name: 'ksoftirqd', pid: 9, cpu_pct: 12 }],
+      } },
+      history: [], zone: 'Asia/Kolkata',
+    };
+    render(<CPU />);
+    expect(screen.getByText('CPU time by state')).toBeInTheDocument();
+    expect(screen.getByRole('row', { name: 'ksoftirqd 9 12%' })).toBeInTheDocument();
+    const userCells = within(screen.getByRole('row', { name: /^User / })).getAllByRole('cell');
+    expect(userCells.map(cell => cell.textContent)).toEqual(['User', '10%', '7%']);
+    expect(screen.getByRole('row', { name: 'Low priority — 0%' })).toBeInTheDocument();
+    expect(screen.getByTitle('Per-core CPU collector ran 100s before the latest core sample')).toBeInTheDocument();
   });
 });
