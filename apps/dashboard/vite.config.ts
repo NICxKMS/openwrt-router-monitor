@@ -24,9 +24,11 @@ function dashboardHeaders(apiUrl: string | undefined): Plugin {
 }
 
 export default defineConfig(({command, mode}) => {
-  const env = loadDashboardEnv(mode);
+  const envDir = command === 'serve' ? process.env.NICX_DEV_ENV_DIR : undefined;
+  const env = loadDashboardEnv(mode, envDir);
   const plugins = [react(), tailwind()];
   return {
+    envDir,
     plugins: command === 'build' ? [...plugins, dashboardHeaders(env.VITE_API_URL)] : plugins,
     build: {
       target: 'es2022',
