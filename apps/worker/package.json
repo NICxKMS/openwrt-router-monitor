@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
-    "build": "node ../../scripts/worker-build.mjs",
-    "deploy": "wrangler deploy"
+    "build": "node ../../scripts/worker-build.mjs"
   },
   "dependencies": {
     "@nicx/shared": "workspace:*",

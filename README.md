@@ -25,17 +25,17 @@ flowchart LR
 Use Node22.22+ and pnpm10.33.2. In WSL Ubuntu:
 
 ```sh
-cd /home/nicx/projects/openwrt-jidu6111/nicx-router-monitor
-pnpm install --frozen-lockfile
+cd nicx-router-monitor
+pnpm install --frozen-lockfile --store-dir "$PWD/node_modules/.release-store"
 pnpm test
 pnpm test:database
 pnpm test:router
 pnpm typecheck
 pnpm build
-pnpm dev
+python3 -B scripts/dev-stack.py
 ```
 
-Without browser environment settings the dashboard explains setup and shows no fabricated telemetry. Copy the browser-safe values from [.env.example](.env.example) into `apps/dashboard/.env.local`. For local management requests set `VITE_API_URL=http://localhost:8787`; configure the Worker's `APP_ORIGIN` to match your local browser address. Worker secrets go in ignored `apps/worker/.dev.vars`, never in frontend environment variables. Start the Worker using `pnpm dev:worker`. The production endpoint and router always use HTTPS; localhost HTTP is development-only.
+Full-stack development requires Docker Engine 28 or later and a Supabase CLI with `supabase start --network-id` support. The command verifies that local Supabase ports are bound to loopback before starting the dashboard. The command creates a local database, starts the Worker and dashboard on free loopback ports, enrolls a simulated router and checks that the fixture owner can read its sample. It prints temporary login details. Press Ctrl+C to remove the session, or add `--check` to verify owner sign-in and the simulated router in Chromium before exiting. Install the test browser with `pnpm exec playwright install chromium` for `--check`. Each session uses its own project and development credentials. A later run can reclaim abandoned sessions. Use `--cleanup` to run that cleanup without starting the stack. Fast database tests use embedded PostgreSQL and work without Docker.
 
 PowerShell can run the same pnpm commands from the Windows checkout path. Package cross-compilation and shell fixture tests run under WSL/Linux. See [deployment](docs/deployment.md) for cloud setup and [router installation](docs/router.md) for package installation/enrollment.
 

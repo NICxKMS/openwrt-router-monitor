@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Packages · JIDU6111</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <a href="#search" class="skip-link">Skip to package search</a>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="JIDU6111 package manager">
+      <span class="brand-mark" aria-hidden="true">j.</span>
+      <span><strong>JIDU6111</strong><small>OpenWrt package manager</small></span>
+    </a>
+    <nav id="library" aria-label="Package library">
+      <p class="nav-label">Your library</p><div id="views" class="filter-group"></div>
+      <p class="nav-label">Browse by category</p><div id="categories" class="filter-group"></div>
+    </nav>
+    <div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><div><strong>Signed packages</strong><p id="memory-free">Matched to your firmware</p></div></div>
+  </aside>
+  <div class="main-area">
+    <header class="topbar">
+      <span id="connection" class="connection" role="status"><i></i><span>Connecting…</span></span>
+      <div class="topbar-actions">
+        <button id="refresh" class="button ghost" type="button" aria-label="Refresh" disabled>↻ <span>Refresh</span></button>
+        <button id="theme" class="icon-button" type="button" aria-label="Switch color theme">◐</button>
+        <button id="close-session" class="button secondary" type="button" disabled>End session</button>
+      </div>
+    </header>
+    <main class="shell" id="main">
+      <div class="page-heading">
+        <div><h1>Package library</h1>
+          <p class="intro">Find the tools you need. Review the changes. Install when you’re ready.</p></div>
+        <a id="open-router" class="button secondary" target="_blank" rel="noopener noreferrer" hidden>Open router ↗</a>
+      </div>
+      <section class="overview" aria-label="Router and feed status">
+        <div><span class="overview-icon" aria-hidden="true">▦</span><div><strong id="feed-total">—</strong><span id="feed-label">Signed package feed</span></div></div>
+        <div><span class="overview-icon" aria-hidden="true">✓</span><div><strong id="installed-total">—</strong><span>installed on your router</span></div></div>
+        <div><span class="overview-icon" aria-hidden="true">▤</span><div><strong id="storage-free">—</strong><span id="storage-label">checking writable storage</span></div></div>
+        <div class="firmware"><span class="status-dot" aria-hidden="true"></span><div><strong id="kernel">Checking firmware</strong><span id="last-checked">Signed feed</span></div></div>
+      </section>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div class="workspace">
+        <section class="catalog" aria-labelledby="catalog-title">
+          <div class="search">
+            <span aria-hidden="true" class="search-symbol">⌕</span>
+            <label class="sr-only" for="search">Search packages by name or purpose</label>
+            <input id="search" type="search" placeholder="What would you like your router to do?" autocomplete="off" disabled><kbd>/</kbd>
+          </div>
+          <label class="sr-only" for="mobile-filter">Browse packages</label>
+          <select id="mobile-filter" class="mobile-filter">
+            <option value="featured">Featured</option><option value="all">All packages</option><option value="installed">Installed</option>
+            <option value="network">Network &amp; VPN</option><option value="dns">DNS &amp; privacy</option><option value="monitoring">Monitoring</option>
+            <option value="system">System &amp; storage</option><option value="drivers">Drivers &amp; libraries</option><option value="other">Other packages</option>
+          </select>
+          <div class="catalog-heading">
+            <div><h2 id="catalog-title">Featured</h2><span id="result-count" aria-live="polite"></span></div>
+            <div class="catalog-controls">
+              <label class="sr-only" for="sort">Sort packages</label>
+              <select id="sort"><option value="recommended">Recommended</option><option value="name">Name A–Z</option><option value="size">Smallest first</option></select>
+              <button id="layout" class="icon-button" type="button" aria-label="Use compact list" aria-pressed="false">☷</button>
+            </div>
+          </div>
+          <div id="packages" class="package-grid" aria-busy="true"><div class="empty-state">Reading your package library…</div></div>
+          <div class="pagination" id="pagination" hidden>
+            <button id="previous" class="button secondary" type="button">← Previous</button><span id="page-number"></span><button id="next" class="button secondary" type="button">Next →</button>
+          </div>
+        </section>
+        <aside class="queue" aria-labelledby="queue-title">
+          <div class="queue-heading"><h2 id="queue-title">Your install queue</h2><span id="queue-count" class="queue-count">0</span><button id="toggle-queue" type="button" class="button ghost" aria-expanded="false" aria-controls="queued">Show selection</button></div>
+          <div id="queue-empty" class="queue-empty"><span aria-hidden="true">＋</span><p>Choose your packages</p><small>Use Add on any package to build your queue.</small></div>
+          <ul id="queued" class="queued" hidden></ul>
+          <div id="queue-summary" class="queue-summary" hidden><span>Selected packages</span><strong id="queue-size"></strong><small>Dependencies are included in the review.</small></div>
+          <p id="queue-note" class="context-note" hidden></p>
+          <div class="queue-actions">
+            <button id="review" class="button primary" type="button" disabled>Review changes <span aria-hidden="true">→</span></button>
+            <button id="clear" class="button ghost" type="button" hidden>Clear selection</button>
+          </div>
+          <div id="active-job" class="active-job" hidden><strong id="job-label">Installation in progress</strong><p id="job-status" role="status"></p><button id="show-job" class="button secondary" type="button">View progress</button></div>
+        </aside>
+      </div>
+      <footer class="page-footer"><span>JioRouter AX6000 · JIDU6111</span><span>APK signatures verified by your router</span></footer>
+    </main>
+  </div>
+  <dialog id="detail-dialog" aria-labelledby="detail-title">
+    <div class="dialog-top"><p class="eyebrow" id="detail-category">Package details</p><button id="close-detail" class="icon-button" type="button" aria-label="Close package details">×</button></div>
+    <h2 id="detail-title"></h2><code id="detail-name"></code><p id="detail-description" class="detail-description"></p>
+    <dl class="detail-metadata" id="detail-metadata"></dl><div id="detail-note" class="context-note" hidden></div>
+    <section id="detail-dependencies"><h3>Direct dependencies</h3><ul id="dependencies" class="dependency-list"></ul></section>
+    <div class="dialog-actions"><a id="upstream" target="_blank" rel="noopener noreferrer" class="button ghost" hidden>Project website ↗</a><button id="detail-add" class="button primary" type="button">Add to queue</button></div>
+  </dialog>
+  <dialog id="review-dialog" aria-labelledby="review-title" aria-describedby="review-message">
+    <div class="dialog-top"><p class="eyebrow">Install packages</p><button id="close-review" class="icon-button" type="button" aria-label="Close installation panel">×</button></div>
+    <ol class="steps" aria-label="Installation steps"><li id="step-review">Review</li><li id="step-install">Install</li><li id="step-done">Done</li></ol>
+    <h2 id="review-title">Review changes</h2><p id="review-message" role="status"></p>
+    <div id="install-progress" hidden><progress id="progress" aria-label="Package installation progress"></progress><span id="progress-label" role="status"></span></div>
+    <ul id="review-packages" class="review-packages"></ul><div id="review-summary" class="review-summary" hidden></div>
+    <ul id="planned-changes" class="planned-changes" aria-label="Planned package changes" hidden></ul>
+    <div id="next-steps" class="next-steps" hidden></div>
+    <details id="transaction-details" hidden><summary>Installation log</summary><button id="download-log" type="button" class="button ghost">Save log ↓</button><pre id="transaction-output" tabindex="0"></pre></details>
+    <div class="dialog-actions"><button id="back" class="button secondary" type="button">Back to packages</button><button id="confirm-install" class="button primary" type="button" hidden>Install packages</button></div>
+  </dialog>
+  <template id="package-card">
+    <article class="package">
+      <div class="package-top"><span class="package-icon" aria-hidden="true"></span><span class="package-category"></span><span class="installed-badge" hidden>Installed</span></div>
+      <h3><button class="package-title" type="button"></button></h3>
+      <code class="package-name"></code><p class="package-description"></p>
+      <div class="package-bottom"><span class="package-size"></span><button class="button package-details" type="button">Details</button><button class="button package-action" type="button"></button></div>
+    </article>
+  </template>
+</body>
+</html>

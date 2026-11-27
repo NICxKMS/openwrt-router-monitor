@@ -1,27 +1,18 @@
 # Deployment guide
 
-The chosen target is a **new Supabase Free project in Mumbai** and Cloudflare Workers Free, with `router.nicx.me` as the dashboard/API. These instructions create cloud resources only when you execute them or authorize connected account tools. No deployment has been performed by merely building this checkout.
+The monitor uses Supabase and Cloudflare Workers, with `router.nicx.me` as the dashboard and API. Follow the production approval process for changes to hosted services. Use the initial provisioning steps only for a new project.
 
 ## 1. Supabase
 
 1. Create a Free organization/project. Choose specific region **South Asia (Mumbai), ap-south-1**. If capacity is unavailable, choose Singapore only after deciding that change. Generate a strong database password and save it in your password manager.
-2. Open SQL Editor and run these files in order, each once: `supabase/migrations/202611250001_core.sql`, `202611250002_storage.sql`, `202611250003_cron.sql`. Then apply follow-up migrations 004 through 008 in filename order. The sequence sets up schema/RLS/RPCs, the private `router-diagnostics` bucket, latest-state Realtime publication, bounded maintenance, diagnostic receipts and backend fixes. Migration 008 is required before the Worker delivers configured Telegram notifications through the attempt-scoped claim API. For repeatable CLI migrations, use the official Supabase CLI, link this project from the platform directory and run `supabase db push`. Review its migration list first. Do not run `db reset` against a hosted project.
+2. Open SQL Editor and run these files in order, each once: `supabase/migrations/202611250001_core.sql`, `202611250002_storage.sql`, `202611250003_cron.sql`. Then apply the remaining migrations in filename order. The sequence sets up schema/RLS/RPCs, the private `router-diagnostics` bucket, latest-state Realtime publication, bounded maintenance, diagnostic receipts and backend fixes. Migration 008 is required before the Worker delivers configured Telegram notifications through the attempt-scoped claim API. On the existing hosted project, compare the actual migration history with the repository SQL before staging an approved migration. The first migrations may have different hosted IDs. Verify equivalent SQL and record the mapping privately. Rehearse pending SQL against disposable data and apply only the reviewed pending migrations in their approved order.
 3. Open Authentication → Users and create your owner with an email and strong password. Disable new public signups in Auth settings. Configure the site URL as `https://router.nicx.me` and an exact redirect allowlist. Password login is supported without depending on the shared email sender. Configure your own SMTP for account recovery/invitations if needed; verify current provider allowances before choosing one.
 4. Copy the project URL and browser publishable key. Keep the modern secret key (sb_secret_...) separate. In `apps/dashboard/.env.local` set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. `VITE_API_URL` may be omitted for same-origin production.
 5. Note your owner UUID for `ADMIN_USER_ID` and `TELEGRAM_OWNER_ID`. It is an identity, not a password.
 6. Check Storage: `router-diagnostics` must be private with gzip MIME support. Check Realtime publication: only `public.device_latest`, not raw metrics/logs. Check Cron jobs: successful maintenance each minute and bounded execution-log cleanup.
 7. Run `tests/database/hosted-smoke.sql` in the project SQL Editor. Then verify reads as two separate authenticated test users; the local PostgreSQL RLS test is evidence of policy logic, not a replacement for testing the actual project.
 
-CLI alternative in WSL (install the official CLI using its current documented method):
-
-```sh
-cd /home/nicx/projects/openwrt-jidu6111/nicx-router-monitor
-supabase login
-supabase link --project-ref YOUR_PROJECT_REFERENCE
-supabase db push
-```
-
-The included `supabase/config.toml` is for local Supabase development and does not automatically apply hosted Auth settings. Docker is needed for the full local Supabase stack; it was unavailable in this WSL session. The automated database suite uses embedded PostgreSQL instead.
+Use `python3 -B scripts/dev-stack.py --check` from the monitoring directory to run the full local stack with Docker. Use the embedded PostgreSQL suite for a fast schema and behavior check.
 
 ## 2. Cloudflare Worker and secrets
 
@@ -38,21 +29,13 @@ pnpm --filter @nicx/worker exec wrangler secret put ADMIN_USER_ID
 
 Review `apps/worker/wrangler.jsonc`: its rate-limit namespace6111 must be unique within your account; `APP_ORIGIN` must exactly match the browser origin. Wrangler can create the Worker when adding its first secret; confirm the account/project name it shows. The privileged Supabase key is never a `VITE_` variable and never installed on the router.
 
-Build and verify before deploying:
+Build the monitoring bundle from the exact clean candidate checkout, using the production browser publishable key in the environment. From the repository root:
 
 ```sh
-pnpm preflight
-pnpm test
-pnpm test:database
-pnpm test:router
-pnpm typecheck
-pnpm build
-pnpm --filter @nicx/worker run deploy
+python3 -B scripts/monitor-bundle.py build "$OUTPUT/monitor-bundle.tar.gz" --source-commit "$COMMIT"
 ```
 
-The final command publishes the Worker and static dashboard assets and enables its minute Cron Trigger. It is an explicit deployment action; the build script performs a dry run only. For a workers.dev trial, set `APP_ORIGIN` to that exact HTTPS address before testing browser management actions, then change it back for the custom domain.
-
-PowerShell uses the same pnpm commands from your Windows project directory. Create browser environment values in a file using your editor; do not paste privileged keys into a browser build command. If Windows tooling cannot run package tests, use `wsl` and the WSL checkout path shown above.
+Run the monitoring CI checks and include this file and its SHA-256 in the Stable draft manifest. The protected workflow verifies that digest, deploys the fixed bundle with Wrangler and reports the active Worker version. Rehearse and approve changes to Cloudflare routes and triggers separately before deployment. For a new Worker, apply the approved minute trigger from `apps/worker/wrangler.jsonc` with `pnpm --filter @nicx/worker exec wrangler triggers deploy`. Check that `* * * * *` appears in the Worker’s Cron Triggers before testing scheduled notifications. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 
 ## 3. Domain
 
@@ -97,13 +80,36 @@ Test using a temporary CPU rule below the current measured usage with a short su
 
 ## 6. GitHub Actions
 
-The parent repository workflow `.github/workflows/nicx-router-monitor.yml` runs checks on changes in this platform. `nicx-router-monitor/.github/workflows/ci.yml` supports exporting this directory as its own repository. Deployment is manual via workflow_dispatch and the `production` environment. Configure environment protection/review if desired.
+The parent repository’s test workflow validates monitoring source. For production, use `production.yml`. Configure the GitHub `production` environment for the protected `stable` branch, require the maintainer’s approval, and set its `JIDU6111_PRODUCTION_MAINTAINER` variable to the reviewing GitHub username. Configure narrowly scoped `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` environment secrets. Keep runtime database credentials in Cloudflare.
 
-Repository variables are `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and, for a separate HTTPS API origin, `VITE_API_URL`. Deployment secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. Scope the Cloudflare token to the intended account/Worker; custom-domain provisioning is done separately. Worker runtime secrets are provisioned once with Wrangler and preserved by deployments. Do not add the database service key as a frontend/Actions variable. Migrations remain an explicit reviewed operation and are not silently pushed on every frontend build.
+From the repository root, prepare the private record for the exact Stable release draft:
 
-Supabase project creation/account authorization, DNS changes and GitHub credential setup are not replaced with placeholder resources. Finish them before marking hosted acceptance complete.
+```sh
+python3 -B scripts/promotion.py prepare --manifest "$OUTPUT/release-manifest.json" --reservation-tag "$TAG"
+```
 
+The draft manifest includes `promotion.kind` and the expected current `promotion.expected_worker_version` for changes that deploy a Worker. Use `promotion.required_agent_version` for any change that depends on a new agent. A combined change must specify it. For database or firmware changes with a Worker deployment, set `promotion.deploy_worker` to `true`. Set `promotion.expected_migrations` to the observed hosted migration identifiers expected after a database change.
 
-## Version control and releases
+When an agent update is required, confirm the installed package on the same router that sent the accepted sample. Record the time of installation verification and the sample's accepted timestamp:
 
-The monitor lives in `nicx-router-monitor/` inside the existing firmware repository. Use a feature branch and pull request; `CONTRIBUTING.md` explains checks, package releases and append-only migrations. The parent workflow is authoritative here; the nested workflow is provided only for a future standalone export. Dependabot opens monthly dependency updates. Browser-safe build variables are configured in GitHub; Cloudflare deployment remains manual and needs a separately scoped Actions token. No runtime database secret is copied into GitHub. Telegram configuration is deferred; dashboard alerts continue to work without it.
+```sh
+python3 -B scripts/promotion.py record-agent --version "$AGENT_VERSION" \
+  --installed-at "$INSTALLED_AT" --received-at "$RECEIVED_AT"
+```
+
+For a change that deploys a Worker, dispatch the workflow with the verified inputs and approve the matching GitHub environment request. For other promotions, continue directly to live verification.
+
+```sh
+set -o pipefail
+python3 -B scripts/promotion.py deployment-inputs --manifest "$OUTPUT/release-manifest.json" --reservation-tag "$TAG" |
+  gh workflow run production.yml --ref stable --json
+```
+
+Following live checks, create a private observed JSON file with `router.board`, `router.kernel`, `router.firmware`, `router.architecture`, `router.trusted_keys` (the SHA-256 fingerprints), `router.agent_version`, `worker_version`, `migrations`, `verified_at` and `checks`. Use UTC timestamps. For firmware include `observation_started_at`. For a Worker deployment include the successful GitHub Actions run ID as the numeric `production_run_id`. Take it from the production workflow run URL. Base checks are `router_identity`, `feed_signature`, `worker_health`, `database_state` and `recovery_ready`. Additional check labels depend on the change and are listed by the verification command when missing. Record checks only after collecting real evidence. Then run:
+
+```sh
+python3 -B scripts/promotion.py verify-production --manifest "$OUTPUT/release-manifest.json" \
+  --reservation-tag "$TAG" --observed "$OBSERVED"
+```
+
+After protected Stable publication succeeds, run `scripts/promotion.py complete` with the same manifest and reservation tag. It checks GitHub Latest and the published manifest before saving the observed state locally. Before clearing an interrupted reservation, check the actual router, Worker and database. If the Worker needs recovery, obtain approval to reactivate the recorded previous compatible version in Cloudflare and then verify dashboard access and telemetry. Keep the database migration history intact and use a reviewed corrective migration or a rehearsed restore when needed.

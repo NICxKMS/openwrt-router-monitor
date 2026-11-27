@@ -5,6 +5,7 @@ export interface Env {
   SUPABASE_SECRET_KEY?:string;
   SUPABASE_SERVICE_ROLE_KEY?:string;
   APP_ORIGIN:string;
+  DEV_LOOPBACK_SUPABASE?:string;
   ADMIN_USER_ID?:string;
   TELEGRAM_BOT_TOKEN?:string;
   TELEGRAM_CHAT_ID?:string;
@@ -19,7 +20,9 @@ export class Database {
   constructor(public env:Env,private fetcher:Fetcher=fetch){}
   private url(path:string):string{
     let url:URL;try{url=new URL(this.env.SUPABASE_URL);}catch{throw new ApiError(503,'backend_not_configured');}
-    if(url.protocol!=='https:' || !backendKey(this.env))throw new ApiError(503,'backend_not_configured');
+    const local=this.env.DEV_LOOPBACK_SUPABASE==='1' && url.protocol==='http:'
+      && url.hostname==='127.0.0.1' && !!url.port && /^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(this.env.APP_ORIGIN);
+    if((url.protocol!=='https:' && !local) || !backendKey(this.env))throw new ApiError(503,'backend_not_configured');
     return url.origin+path;
   }
   async call<T=unknown>(path:string,options:RequestInit={},authToken?:string):Promise<T>{

@@ -3,8 +3,8 @@ import {loadEnv} from 'vite';
 
 const dashboardDirectory = fileURLToPath(new URL('.', import.meta.url));
 
-export function loadDashboardEnv(mode: string) {
-  const env = loadEnv(mode, dashboardDirectory);
+export function loadDashboardEnv(mode: string, envDir = dashboardDirectory) {
+  const env = loadEnv(mode, envDir);
   const key = env.VITE_SUPABASE_ANON_KEY?.trim() ?? '';
   if (key.startsWith('sb_secret_')) {
     throw new Error('A secret Supabase key was assigned to a browser variable.');

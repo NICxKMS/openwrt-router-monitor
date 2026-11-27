@@ -24,6 +24,17 @@ describe('private API',()=>{
     const db=new Database(env,async function(this:unknown){expect(this).toBeUndefined();return Response.json({ok:true});});
     await expect(db.rpc('fixture')).resolves.toEqual({ok:true});
   });
+  it('allows an explicitly enabled local database without permitting insecure hosted origins', async () => {
+    const fetcher = vi.fn(async () => Response.json({ok: true}));
+    const local = {...env, APP_ORIGIN: 'http://127.0.0.1:5174', SUPABASE_URL: 'http://127.0.0.1:54321'};
+    await expect(new Database(local, fetcher).rpc('fixture')).rejects.toMatchObject({status: 503});
+    await expect(new Database({...local, DEV_LOOPBACK_SUPABASE: '1'}, fetcher).rpc('fixture')).resolves.toEqual({ok: true});
+    await expect(new Database({...local, DEV_LOOPBACK_SUPABASE: '1', SUPABASE_URL: 'http://example.test:54321'}, fetcher)
+      .rpc('fixture')).rejects.toMatchObject({status: 503});
+    await expect(new Database({...local, DEV_LOOPBACK_SUPABASE: '1', APP_ORIGIN: env.APP_ORIGIN}, fetcher)
+      .rpc('fixture')).rejects.toMatchObject({status: 503});
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it('uses Worker-supported manual redirects and refuses to follow privileged requests',async()=>{
     let mode:RequestRedirect|undefined;
     const db=new Database(env,async(_input,options)=>{mode=options?.redirect;return new Response(null,{status:302,headers:{Location:'https://untrusted.example'}});});
