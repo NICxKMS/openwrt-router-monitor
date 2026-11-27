@@ -10,5 +10,9 @@
   "triggers": { "crons": ["* * * * *"] },
   "ratelimits": [{ "name": "API_RATE_LIMITER", "namespace_id": "6111", "simple": { "limit": 120, "period": 60 } }],
   "vars": { "APP_ORIGIN": "https://router.nicx.me", "SUPABASE_URL": "https://whpnjrdsksgmtzgvaepx.supabase.co" },
+  "previews": {
+    "ratelimits": [{ "name": "API_RATE_LIMITER", "namespace_id": "6112", "simple": { "limit": 120, "period": 60 } }],
+    "observability": { "enabled": false }
+  },
   "observability": { "enabled": false }
 }
