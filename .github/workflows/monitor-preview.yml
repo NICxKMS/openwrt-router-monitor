@@ -1,0 +1,87 @@
+name: Cloudflare Development Preview
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact protected Development commit
+        type: string
+        required: true
+
+permissions:
+  contents: read
+concurrency:
+  group: jidu6111-development-preview
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    # Enable after the standalone Preview environment is configured and approved.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    environment: development-preview
+    timeout-minutes: 15
+    env:
+      NICX_PREVIEW_ORIGIN: ${{ vars.NICX_PREVIEW_ORIGIN }}
+      NICX_PREVIEW_SUPABASE_URL: ${{ vars.NICX_PREVIEW_SUPABASE_URL }}
+      NICX_PREVIEW_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NICX_PREVIEW_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: python3 -B scripts/cloudflare_preview.py
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.22.1
+          package-manager-cache: false
+      - name: Build and test the Preview dashboard
+        env:
+          VITE_SUPABASE_URL: ${{ vars.NICX_PREVIEW_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.NICX_PREVIEW_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_API_URL: ''
+        run: |
+          pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/preview-pnpm"
+          pnpm preflight
+          pnpm test
+          pnpm build
+      - name: Update only the native Development Preview
+        working-directory: apps/worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.NICX_PREVIEW_CLOUDFLARE_TOKEN }}
+          NICX_PREVIEW_SUPABASE_SECRET_KEY: ${{ secrets.NICX_PREVIEW_SUPABASE_SECRET_KEY }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/development" --jq .object.sha)" = "$GITHUB_SHA"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          [[ "$NICX_PREVIEW_SUPABASE_SECRET_KEY" == sb_secret_* ]]
+          umask 077
+          scratch=$(mktemp -d "$RUNNER_TEMP/jidu-preview.XXXXXXXX")
+          trap 'rm -rf -- "$scratch"' EXIT
+          jq -n '{SUPABASE_SECRET_KEY: env.NICX_PREVIEW_SUPABASE_SECRET_KEY}' > "$scratch/secrets.json"
+          unset NICX_PREVIEW_SUPABASE_SECRET_KEY
+          pnpm exec wrangler preview --config wrangler.jsonc --name development --json \
+            --ignore-base-config --tag "$GITHUB_SHA" --secrets-file "$scratch/secrets.json" \
+            --var "APP_ORIGIN:$NICX_PREVIEW_ORIGIN" --var "SUPABASE_URL:$NICX_PREVIEW_SUPABASE_URL" \
+            > "$scratch/preview.json"
+          jq -e --arg origin "$NICX_PREVIEW_ORIGIN" '
+            .type == "preview" and .preview_name == "development"
+            and ((.preview_urls // []) | index($origin) != null)
+          ' "$scratch/preview.json" >/dev/null
+          curl --fail --silent --show-error --retry 4 --max-time 15 \
+            "$NICX_PREVIEW_ORIGIN/api/v1/health" --output "$scratch/health.json"
+          jq -e '.ok == true' "$scratch/health.json" >/dev/null
+          curl --fail --silent --show-error --retry 4 --max-time 15 --compressed \
+            "$NICX_PREVIEW_ORIGIN/" --output "$scratch/index.html"
+          cmp "$scratch/index.html" ../dashboard/dist/index.html
+          printf 'Development Preview: %s\n' "$NICX_PREVIEW_ORIGIN" >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        run: rm -rf -- "$RUNNER_TEMP/preview-pnpm"

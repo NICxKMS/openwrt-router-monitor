@@ -1,0 +1,170 @@
+name: Production monitor deployment
+run-name: Production monitor • ${{ inputs.reservation_tag }} • ${{ inputs.candidate }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Exact Stable commit approved for deployment
+        type: string
+        required: true
+      reservation_tag:
+        description: Managed Stable draft tag
+        type: string
+        required: true
+      manifest_sha:
+        description: SHA-256 of the verified draft manifest
+        type: string
+        required: true
+      bundle_sha:
+        description: SHA-256 of the verified monitor bundle
+        type: string
+        required: true
+      agent_version:
+        description: Observed installed agent package version, when required
+        type: string
+        required: false
+      agent_installed_at:
+        description: When the maintainer confirmed the installed package (UTC)
+        type: string
+        required: false
+      telemetry_received_at:
+        description: Accepted sample observed by the maintainer after checking the package (UTC)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jidu6111-release-publish
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Firmware draft access and independent source verification must be wired before activation.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      # GitHub only lists draft releases for actors with push access.
+      contents: write
+    steps:
+      - name: Check maintainer environment approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAINTAINER: ${{ vars.JIDU6111_PRODUCTION_MAINTAINER }}
+        run: |
+          test -n "$MAINTAINER"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
+            jq -e --arg user "$MAINTAINER" '
+              any(.[]; .state == "approved" and
+                (.user.login | ascii_downcase) == ($user | ascii_downcase) and
+                any(.environments[]; .name == "production"))
+            ' >/dev/null
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Verify exact candidate and retrieve approved draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.candidate }}
+          TAG: ${{ inputs.reservation_tag }}
+          MANIFEST_SHA: ${{ inputs.manifest_sha }}
+          BUNDLE_SHA: ${{ inputs.bundle_sha }}
+          AGENT_VERSION: ${{ inputs.agent_version }}
+          AGENT_INSTALLED_AT: ${{ inputs.agent_installed_at }}
+          TELEMETRY_RECEIVED_AT: ${{ inputs.telemetry_received_at }}
+        run: |
+          [[ "$CANDIDATE" == "$GITHUB_SHA" && "$(git rev-parse HEAD)" == "$CANDIDATE" ]]
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/branches/stable" --jq .commit.sha)" == "$CANDIDATE" ]]
+          release=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -esc --arg tag "$TAG" --arg candidate "$CANDIDATE" '
+              [ .[][] | select(.tag_name == $tag and .draft == true and .prerelease == false
+                and .target_commitish == $candidate
+                and (.body // "" | split("\n") | index("<!-- jidu6111-managed -->") != null)) ]
+              | if length == 1 then .[0] else error("Expected one managed Stable draft") end
+            ')
+          fetch_asset() {
+            local id
+            id=$(jq -er --arg name "$1" '
+              [ .assets[] | select(.name == $name and .state == "uploaded") ]
+              | if length == 1 then .[0].id else error("Missing draft asset") end
+            ' <<<"$release")
+            gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$RUNNER_TEMP/$1"
+          }
+          fetch_asset release-manifest.json
+          python3 scripts/promotion.py verify-deployment --manifest "$RUNNER_TEMP/release-manifest.json" \
+            --candidate "$CANDIDATE" --manifest-sha "$MANIFEST_SHA" --bundle-sha "$BUNDLE_SHA" \
+            --agent-version "$AGENT_VERSION" --agent-installed-at "$AGENT_INSTALLED_AT" \
+            --telemetry-received-at "$TELEMETRY_RECEIVED_AT"
+          fetch_asset monitor-bundle.tar.gz
+          printf '%s  %s\n' "$BUNDLE_SHA" "$RUNNER_TEMP/monitor-bundle.tar.gz" | sha256sum -c -
+          python3 scripts/monitor-bundle.py unpack "$RUNNER_TEMP/monitor-bundle.tar.gz" \
+            "$RUNNER_TEMP/verified-monitor" --source-commit "$CANDIDATE"
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.22.1
+          package-manager-cache: false
+      - name: Install pinned deployment tooling in the job workspace
+        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-store"
+      - name: Recheck the protected branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/branches/stable" --jq .commit.sha)" = "$GITHUB_SHA"
+      - name: Upload and activate the verified Worker version
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+          TAG: ${{ inputs.reservation_tag }}
+          MANIFEST_SHA: ${{ inputs.manifest_sha }}
+          BUNDLE_SHA: ${{ inputs.bundle_sha }}
+        run: |
+          set -euo pipefail
+          expected=$(jq -er '.promotion.expected_worker_version' "$RUNNER_TEMP/release-manifest.json")
+          current_worker() {
+            pnpm exec wrangler deployments status --json |
+              jq -er '.versions | select(length == 1 and .[0].percentage == 100) | .[0].version_id'
+          }
+          test "$(current_worker)" = "$expected"
+          pnpm exec wrangler versions upload "$RUNNER_TEMP/verified-monitor/worker.js" --config "$PWD/wrangler.jsonc" \
+            --no-bundle --no-upload-source-maps --strict --assets "$RUNNER_TEMP/verified-monitor/dashboard" \
+            --tag "$TAG-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --message "$TAG $GITHUB_SHA" |
+            tee "$RUNNER_TEMP/worker-upload.txt"
+          version=$(sed -nE 's/^Worker Version ID: ([a-f0-9-]{36})$/\1/p' "$RUNNER_TEMP/worker-upload.txt")
+          [[ "$version" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]
+          printf 'Uploaded Worker version `%s` for `%s`.\n' "$version" "$TAG" >>"$GITHUB_STEP_SUMMARY"
+          test "$(current_worker)" = "$expected"
+          pnpm exec wrangler versions deploy "$version@100" --yes --message "$TAG $GITHUB_SHA"
+          for attempt in 1 2 3 4 5; do
+            if [[ "$(current_worker)" == "$version" ]]; then break; fi
+            sleep 2
+          done
+          test "$(current_worker)" = "$version"
+          url=$(jq -er '.vars.APP_ORIGIN | select(startswith("https://"))' wrangler.jsonc)
+          curl --fail --silent --show-error --max-time 15 --retry 4 "$url/api/v1/health" \
+            --output "$RUNNER_TEMP/worker-health.json"
+          jq -e '.ok == true' "$RUNNER_TEMP/worker-health.json" >/dev/null
+          dashboard_verified=false
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --compressed --max-time 15 "$url/" -o "$RUNNER_TEMP/dashboard.html" &&
+              cmp -s "$RUNNER_TEMP/dashboard.html" "$RUNNER_TEMP/verified-monitor/dashboard/index.html"; then
+              dashboard_verified=true
+              break
+            fi
+            sleep 2
+          done
+          test "$dashboard_verified" = true
+          printf 'Activated Worker version `%s`. Public health checks passed.\n' "$version" >>"$GITHUB_STEP_SUMMARY"
+          receipt=$(jq -cn --arg candidate "$GITHUB_SHA" --arg release_tag "$TAG" \
+            --arg manifest_sha "$MANIFEST_SHA" --arg bundle_sha "$BUNDLE_SHA" --arg worker_version "$version" \
+            '$ARGS.named')
+          printf '::notice file=.github/workflows/production.yml,line=1,title=JIDU6111 production receipt::%s\n' "$receipt"
