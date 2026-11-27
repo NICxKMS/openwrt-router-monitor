@@ -1,0 +1,95 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# NICxKMS/openwrt-router-monitor — scoped guidance lives in .coderabbit/instructions/.
+language: en-US
+early_access: false
+enable_free_tier: true
+tone_instructions: >-
+  Be rigorous, concise, constructive and evidence-driven. Prioritize correctness,
+  security, reliability, resource efficiency and user experience. Avoid speculative,
+  redundant or purely stylistic findings.
+
+reviews:
+  profile: assertive
+  review_status: true
+  review_info: true
+  review_details: true
+  commit_status: true
+  fail_commit_status: true
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  auto_apply_labels: false
+  suggested_reviewers: false
+  poem: false
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: true
+  abort_on_close: true
+  disable_cache: false
+  auto_approvals:
+    enabled: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    drafts: true
+    base_branches:
+      - ".*"
+
+  # Keep manifests, checksums, patches, lockfiles and source/config reviewable.
+  # Binary exclusions mean binary contents are not independently reviewed.
+  path_filters:
+    - "!**/*.bin"
+    - "!**/*.apk"
+    - "!**/*.adb"
+    - "!**/*.itb"
+    - "!**/*.ipk"
+    - "!**/*.img"
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/.wrangler/**"
+    - "!**/coverage/**"
+    - "!**/playwright-report/**"
+    - "!**/test-results/**"
+    - "!**/__pycache__/**"
+
+  high_level_summary_instructions: |
+    Summarize actual behavior, user-visible effects, compatibility, security,
+    resource impact, tests and unresolved risks. Distinguish code changes from
+    deployment, estimates from measurements, and host fixtures from hardware tests.
+    Never claim successful deployment, hardware acceptance or binary verification
+    without supporting evidence.
+
+  merge_risk_instructions: |
+    Evaluate consequences, not patch size. Treat potential boot failure, flash
+    corruption, ABI incompatibility, OOM, connectivity loss, authorization bypass,
+    credential exposure, data loss, unsafe migrations, quota exhaustion and
+    incompatible component upgrades as serious risks. Consider rollback and
+    missing verification. Distinguish demonstrated defects from uncertainty.
+
+  # These features can modify branches when invoked; keep agents in control.
+  finishing_touches:
+    unit_tests:
+      enabled: true
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+chat:
+  auto_reply: true
+knowledge_base:
+  code_guidelines:
+    enabled: true
+  pull_requests:
+    scope: local

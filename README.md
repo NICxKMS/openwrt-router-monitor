@@ -25,7 +25,6 @@ flowchart LR
 Use Node22.22+ and pnpm10.33.2. In WSL Ubuntu:
 
 ```sh
-cd nicx-router-monitor
 pnpm install --frozen-lockfile --store-dir "$PWD/node_modules/.release-store"
 pnpm test
 pnpm test:database
@@ -38,6 +37,12 @@ python3 -B scripts/dev-stack.py
 Full-stack development requires Docker Engine 28 or later and a Supabase CLI with `supabase start --network-id` support. The command verifies that local Supabase ports are bound to loopback before starting the dashboard. The command creates a local database, starts the Worker and dashboard on free loopback ports, enrolls a simulated router and checks that the fixture owner can read its sample. It prints temporary login details. Press Ctrl+C to remove the session, or add `--check` to verify owner sign-in and the simulated router in Chromium before exiting. Install the test browser with `pnpm exec playwright install chromium` for `--check`. Each session uses its own project and development credentials. A later run can reclaim abandoned sessions. Use `--cleanup` to run that cleanup without starting the stack. Fast database tests use embedded PostgreSQL and work without Docker.
 
 PowerShell can run the same pnpm commands from the Windows checkout path. Package cross-compilation and shell fixture tests run under WSL/Linux. See [deployment](docs/deployment.md) for cloud setup and [router installation](docs/router.md) for package installation/enrollment.
+
+The monitoring recipes in `openwrt/` are consumed by [JIDU6111 firmware](https://github.com/NICxKMS/openwrt-jidu6111) at an exact Git commit. Firmware builds and signs compatible APKs. This checkout builds and tests the application independently.
+
+For package changes, verify the monitor source first, then submit a firmware PR updating the full SHA in `sources/feeds.conf`. In a prepared firmware checkout, run `make source feeds configure-gcc-kernel`, then `make -C openwrt package/feeds/nicx_monitor/nicx-telemetry/compile package/feeds/nicx_monitor/luci-app-nicx-telemetry/compile`. Use the firmware release process to sign, verify and promote the feed. Web-only changes need no firmware build.
+
+The OpenWrt recipes in `openwrt/` are consumed through a full Git commit pin by [the JIDU6111 firmware repository](https://github.com/NICxKMS/openwrt-jidu6111). It builds and signs compatible APKs and publishes the firmware and signed feeds. The monitor can build and run its ordinary tests from this checkout alone.
 
 ## Features and evidence
 

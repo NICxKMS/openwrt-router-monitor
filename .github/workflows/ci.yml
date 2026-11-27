@@ -1,7 +1,7 @@
 name: Router monitor
 on:
   push:
-    branches: [main, master]
+    branches: [development, stable]
   pull_request:
 concurrency:
   group: nicx-monitor-${{ github.workflow }}-${{ github.ref }}
@@ -10,16 +10,21 @@ permissions:
   contents: read
 jobs:
   verify:
+    name: Required repository checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         with:
           version: 10.33.2
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22.22.1
-      - run: pnpm install --frozen-lockfile
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm"
+      - run: python3 -B -m unittest discover -s scripts/tests -v
       - run: pnpm preflight && pnpm test && pnpm typecheck
       - run: sudo apt-get update && sudo apt-get install -y busybox-static cmake libjson-c-dev
       - run: sh scripts/build-test-jshn.sh "$RUNNER_TEMP/nicx-test-tools"
@@ -37,6 +42,5 @@ jobs:
       - run: pnpm test:browser
       - run: pnpm build
         env:
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_SUPABASE_URL: http://127.0.0.1:54321
+          VITE_SUPABASE_ANON_KEY: local-test-public-key

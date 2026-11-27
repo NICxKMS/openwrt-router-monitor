@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-MONITOR = ROOT / "nicx-router-monitor"
+MONITOR = ROOT
 REQUIRED = {"bundle.json", "worker.js", "dashboard/index.html"}
 MAX_BYTES = 96 * 1024 * 1024
 MAX_MEMBERS = 4096

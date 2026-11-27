@@ -1,6 +1,6 @@
 # Nicx Router Monitor
 
-Scope: this directory only. The parent firmware workspace has unrelated user edits; preserve them. Do not modify the parent's OpenWrt tree or install anything on the physical router without an explicit request.
+Scope: this repository. Firmware builds and physical router operations belong to NICxKMS/openwrt-jidu6111.
 
 ## Branch policy
 
@@ -8,8 +8,6 @@ Scope: this directory only. The parent firmware workspace has unrelated user edi
 | --- | --- | --- |
 | `development` | Shared integration and the source of Development candidates. | Permanent. |
 | `stable` | Source and component pins approved for production. | Permanent. |
-| `router` | Legacy downloads for the installed firmware. | Retire after the replacement installer passes on hardware and the maintainer approves. |
-| `codex/jidu6111-release-workflow` | Introduce the unified release tools and verify them. | Retire after the change is merged. |
 
 - Record each new branch's purpose, dependencies and retirement condition. Use separate worktrees and target regular monitoring PRs at `development`.
 - Send selective production promotion PRs to `stable`. Follow the release procedure before deploying or recording the change as Stable.

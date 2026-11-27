@@ -71,7 +71,7 @@ Hardware acceptance still includes follow-up service-state/Wi-Fi fixes, firmware
 
 ## This workspace
 
-The signed build artifacts are in artifacts/openwrt/ and the parent combined feed. From the parent firmware workspace, run make install-packages and search nicx to select both packages. The existing installer verifies the board, full kernel and signing key and simulates the package plan before installation. User confirmed JIDU6111 at192.168.50.1, kernel6.18.60 and APK. No firmware flashing is needed for these userspace packages. Release 2 installation and its matching cloud snapshot receipt were verified on this router. The existing signed artifacts are release 3. The review fixes are in release 4 source and need a fresh signed build before installation.
+The package dashboard runs from this repository with `python3 -B scripts/install-packages.py --router ROUTER_IP`. It discovers compatible signed assets from [JIDU6111 firmware releases](https://github.com/NICxKMS/openwrt-jidu6111/releases). Pass `--feed /path/to/signed-feed` for a local feed, including the published legacy `router` feed. The installer verifies the board, full kernel and signing key and simulates the package plan before installation. The observed JIDU6111 installation runs both monitor APKs at 1.0.0-r2 on kernel 6.18.60. New source needs a compatible signed build before installation.
 
 When building through direct make command-line module overrides instead of menuconfig, explicitly build the stat dependency too:
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-MODULE = Path(__file__).resolve().parents[2] / "nicx-router-monitor" / "scripts" / "dev-stack.py"
+MODULE = Path(__file__).resolve().parents[1] / "dev-stack.py"
 spec = importlib.util.spec_from_file_location("dev_stack", MODULE)
 stack = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stack)

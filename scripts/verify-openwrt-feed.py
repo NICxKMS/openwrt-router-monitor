@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[2] / 'openwrt')
+parser.add_argument('--source', type=Path, required=True, help='built OpenWrt checkout from the firmware repository')
 args = parser.parse_args()
 source = args.source.resolve()
 binary = source / 'staging_dir/host/bin/apk'

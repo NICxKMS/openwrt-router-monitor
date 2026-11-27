@@ -1,0 +1,7 @@
+# Firmware repository extraction
+
+The source was extracted from the `nicx-router-monitor/` subtree of [NICxKMS/openwrt-jidu6111](https://github.com/NICxKMS/openwrt-jidu6111), with the subtree moved to the repository root. The extraction also preserves the history of the package dashboard, installer, release feed client, monitoring bundle helper and monitoring-specific Python tests from the firmware root. The [commit map](migration-commit-map.txt) gives original and extracted object IDs. An all-zero extracted ID means that an original commit contributed no distinct commit to the selected paths. The firmware repository retains its original history.
+
+The firmware Development checkpoint was `288616d6c0d34c54cb936794af41a40e7a6f4c79`. Its prior self-feed pin was `ca4be8e923754537dc77dd17eabf43ab81e6087f`. The package source at the checkpoint has the same Git tree as the old pin. The firmware Stable checkpoint was `b4109f1b5f6a18ba6cfe264cb87f6189a4a7bfb4`. The installed APK versions and firmware artifact are known, and the exact live Worker source remains unverified. Establish the monitoring Stable branch once production provenance is resolved.
+
+The production and Preview workflow definitions are disabled during migration. The Preview definition, validator and Worker Preview configuration came from firmware PR #10 at `fcc0b40d56ca038d5e30554a7c4a35b76525fb52`. Monitor CI uses a loopback URL and local test key. See the migration handoff for the cross-repository production gate and the isolated Preview environment.
