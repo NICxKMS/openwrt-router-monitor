@@ -115,26 +115,37 @@ def build_environment(scratch, supabase_url, publishable_key):
     return env
 
 
-def build(destination, source_commit):
+def database_for_build(config, channel):
+    production = config["vars"]["SUPABASE_URL"]
+    if channel == "stable":
+        return production
+    database = config.get("env", {}).get("beta", {}).get("vars", {}).get("SUPABASE_URL", "")
+    if not re.fullmatch(r"https://[a-z0-9]{20}\.supabase\.co", database) or database == production:
+        raise ValueError("Beta requires an HTTPS Supabase project distinct from Production")
+    return database
+
+
+def build(destination, source_commit, channel):
     key = os.environ.get("VITE_SUPABASE_ANON_KEY", "")
     if not key:
-        raise ValueError("Set VITE_SUPABASE_ANON_KEY to the production browser publishable key")
+        raise ValueError(f"Set VITE_SUPABASE_ANON_KEY to the {channel} browser publishable key")
     config_path = MONITOR / "apps/worker/wrangler.jsonc"
-    config = json.loads(config_path.read_text())
-    with tempfile.TemporaryDirectory(prefix="jidu6111-monitor-bundle-") as work:
+    database = database_for_build(json.loads(config_path.read_text()), channel)
+    wrangler_env = "beta" if channel == "beta" else ""
+    with tempfile.TemporaryDirectory(prefix="nicx-monitor-bundle-") as work:
         scratch = Path(work)
-        env = build_environment(scratch, config["vars"]["SUPABASE_URL"], key)
+        env = build_environment(scratch, database, key)
         actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, env=env, text=True).strip()
         status = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, env=env, text=True)
         if actual != source_commit or status:
-            raise ValueError("Build a production bundle from a clean checkout of the exact candidate")
+            raise ValueError("Build a monitor bundle from a clean checkout of the exact candidate")
         dashboard = scratch / "dashboard"
         worker = scratch / "worker"
         subprocess.run(["pnpm", "--filter", "@nicx/dashboard", "build", "--outDir", str(dashboard)],
                        cwd=MONITOR, env=env, check=True)
         subprocess.run(["pnpm", "--filter", "@nicx/worker", "exec", "wrangler", "versions", "upload",
                         "--config", str(config_path), "--dry-run", "--outdir", str(worker),
-                        "--assets", str(dashboard)],
+                        "--assets", str(dashboard), "--env", wrangler_env],
                        cwd=MONITOR, env=env, check=True)
         pack(destination, worker / "index.js", dashboard, source_commit)
 
@@ -148,6 +159,8 @@ def main():
         command.add_argument("--source-commit", required=True)
         if name == "unpack":
             command.add_argument("destination", type=Path)
+        else:
+            command.add_argument("--channel", choices=("stable", "beta"), default="stable")
     args = parser.parse_args()
     try:
         if not re.fullmatch("[a-f0-9]{40}", args.source_commit):
@@ -155,7 +168,7 @@ def main():
         if args.command == "unpack":
             unpack(args.archive, args.destination, args.source_commit)
         else:
-            build(args.archive, args.source_commit)
+            build(args.archive, args.source_commit, args.channel)
     except (ValueError, OSError, tarfile.TarError, subprocess.SubprocessError) as error:
         print(f"Monitor bundle error: {error}", file=sys.stderr)
         return 1

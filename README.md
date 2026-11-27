@@ -38,11 +38,7 @@ Full-stack development requires Docker Engine 28 or later and a Supabase CLI wit
 
 PowerShell can run the same pnpm commands from the Windows checkout path. Package cross-compilation and shell fixture tests run under WSL/Linux. See [deployment](docs/deployment.md) for cloud setup and [router installation](docs/router.md) for package installation/enrollment.
 
-The monitoring recipes in `openwrt/` are consumed by [JIDU6111 firmware](https://github.com/NICxKMS/openwrt-jidu6111) at an exact Git commit. Firmware builds and signs compatible APKs. This checkout builds and tests the application independently.
-
-For package changes, verify the monitor source first, then submit a firmware PR updating the full SHA in `sources/feeds.conf`. In a prepared firmware checkout, run `make source feeds configure-gcc-kernel`, then `make -C openwrt package/feeds/nicx_monitor/nicx-telemetry/compile package/feeds/nicx_monitor/luci-app-nicx-telemetry/compile`. Use the firmware release process to sign, verify and promote the feed. Web-only changes need no firmware build.
-
-The OpenWrt recipes in `openwrt/` are consumed through a full Git commit pin by [the JIDU6111 firmware repository](https://github.com/NICxKMS/openwrt-jidu6111). It builds and signs compatible APKs and publishes the firmware and signed feeds. The monitor can build and run its ordinary tests from this checkout alone.
+The monitor has two components. `openwrt/` contains the agent and LuCI recipes. `apps/`, `packages/` and `supabase/` contain the dashboard, Worker, shared protocol and migrations. Both components use the same [release version and channel](docs/releases.md). The [JIDU6111 firmware repo](https://github.com/NICxKMS/openwrt-jidu6111) can independently consume the package recipes at an exact Git commit.
 
 ## Features and evidence
 

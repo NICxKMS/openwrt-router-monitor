@@ -1,6 +1,6 @@
 # Contributing
 
-Work from a short-lived `codex/…`, `feat/…` or `fix/…` branch and open a pull request against `development`. Keep commits focused, describe the user-visible behavior, and include relevant verification. Preserve unrelated firmware workspace edits. Never commit `.env.local`, Worker secrets, router credentials, private diagnostics, build trees or package binaries.
+Work from a short-lived branch and an isolated worktree. Open regular pull requests against `main`. Keep commits focused, describe the user-visible behavior, and include relevant verification. Never commit `.env.local`, Worker secrets, router credentials, private diagnostics, build trees or package binaries. See the [release policy](docs/releases.md) for maintenance of an older compatibility series.
 
 From this directory, run `pnpm install --frozen-lockfile`, `pnpm preflight`, `pnpm test`, `pnpm typecheck`, `pnpm test:database`, `pnpm test:router` and `pnpm build`. Browser checks use `pnpm exec playwright install chromium` then `pnpm test:browser`. CI additionally builds the pinned native OpenWrt JSON helper, runs the BusyBox tests and ingests a host-generated fixture into its local test database. Fixture data never goes to production.
 

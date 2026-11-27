@@ -40,7 +40,7 @@ reviews:
     auto_pause_after_reviewed_commits: 0
     drafts: true
     base_branches:
-      - ".*"
+      - "^main$"
 
   # Keep manifests, checksums, patches, lockfiles and source/config reviewable.
   # Binary exclusions mean binary contents are not independently reviewed.

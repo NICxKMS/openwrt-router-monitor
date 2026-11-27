@@ -14,5 +14,21 @@
     "ratelimits": [{ "name": "API_RATE_LIMITER", "namespace_id": "6112", "simple": { "limit": 120, "period": 60 } }],
     "observability": { "enabled": false }
   },
+  "env": {
+    "beta": {
+      "name": "nicx-router-monitor-beta",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [{ "pattern": "router-beta.nicx.me", "custom_domain": true }],
+      "assets": { "directory": "../dashboard/dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*"] },
+      "ratelimits": [{ "name": "API_RATE_LIMITER", "namespace_id": "6113", "simple": { "limit": 120, "period": 60 } }],
+      "vars": { "APP_ORIGIN": "https://router-beta.nicx.me", "SUPABASE_URL": "https://bjpyiselwmzxfdnnubgo.supabase.co" },
+      "previews": {
+        "ratelimits": [{ "name": "API_RATE_LIMITER", "namespace_id": "6114", "simple": { "limit": 120, "period": 60 } }],
+        "observability": { "enabled": false }
+      },
+      "observability": { "enabled": false }
+    }
+  },
   "observability": { "enabled": false }
 }

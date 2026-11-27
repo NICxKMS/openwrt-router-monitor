@@ -1,16 +1,16 @@
 # Nicx Router Monitor
 
-Scope: this repository. Firmware builds and physical router operations belong to NICxKMS/openwrt-jidu6111.
+Scope: this repository. It owns the router monitoring packages and web application. Firmware builds belong to NICxKMS/openwrt-jidu6111. Physical router changes require owner authorization.
 
 ## Branch policy
 
 | Branch | Purpose | Lifecycle |
 | --- | --- | --- |
-| `development` | Shared integration and the source of Development candidates. | Permanent. |
-| `stable` | Source and component pins approved for production. | Permanent. |
+| `main` | Protected integration branch for both components. | Permanent. |
+| Temporary branches | Pull requests and maintenance from an immutable Stable tag. | Retire after merge or forward-port, once safe. |
 
-- Record each new branch's purpose, dependencies and retirement condition. Use separate worktrees and target regular monitoring PRs at `development`.
-- Send selective production promotion PRs to `stable`. Follow the release procedure before deploying or recording the change as Stable.
+- Use separate worktrees and target regular monitoring PRs at `main`.
+- Stable and Beta are GitHub release channels. An exact release tag identifies both components. Follow [release policy](docs/releases.md) before publishing or deploying.
 
 ## Architecture and conventions
 - pnpm workspace; React/Vite dashboard, Hono Worker, shared Zod wire schema, PostgreSQL migrations, BusyBox ash agent and LuCI packages.
@@ -27,4 +27,4 @@ Scope: this repository. Firmware builds and physical router operations belong to
 ## Delivery status
 Core implementation and Cloudflare deployment are present. Supabase project whpnjrdsksgmtzgvaepx is Free/Mumbai, migrations001–006 applied and Cron verified. Cloudflare account02d66297ae254b05f52ec3795c717da9 hosts router.nicx.me. Backend uses modern SUPABASE_SECRET_KEY via apikey only; legacy fallback is compatibility-only. Workers requires redirect:manual with explicit non-2xx rejection, not redirect:error. Owner Auth user is created and public signup is disabled; the actual JIDU6111 is enrolled and sending real samples. Telegram setup is explicitly deferred by the owner. Release2 packages and the action-feedback dashboard are deployed; real snapshot request/receipt matching is verified. Controlled routing/Wi-Fi impact measurements remain pending. Tests/fixtures must never seed production. See docs/limitations.md and checklist; do not claim the full original definition of done.
 
-Pre-merge review corrections are in source: migration007 adds cadence-aware alert continuity and safe active-rule device deletion; router release3 carries atomic snapshot caches and cadence metadata. These source changes have local regression/build verification and are distinct from the release2 installation/migrations001–006 hosted acceptance above. Treat docs/deployment-state.json as historical evidence. Read the live systems and the owner-only promotion record before claiming rollout.
+Treat docs/deployment-state.json as historical evidence. Verify the installed APK inventory, accepted telemetry, Worker deployment and applied migrations before claiming rollout.
