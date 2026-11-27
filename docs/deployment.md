@@ -16,10 +16,9 @@ Use `python3 -B scripts/dev-stack.py --check` from the monitoring directory to r
 
 ## 2. Cloudflare Worker and secrets
 
-Authenticate with Wrangler in your own account. No paid Workers plan is needed. Secrets are entered interactively so they do not appear in command history:
+Authenticate with Wrangler in your own account. No paid Workers plan is needed. From the standalone monitor checkout, enter secrets interactively to keep them out of command history.
 
 ```sh
-cd /home/nicx/projects/openwrt-jidu6111/nicx-router-monitor
 pnpm install --frozen-lockfile
 pnpm --filter @nicx/worker exec wrangler login
 pnpm --filter @nicx/worker exec wrangler secret put SUPABASE_URL
@@ -29,13 +28,7 @@ pnpm --filter @nicx/worker exec wrangler secret put ADMIN_USER_ID
 
 Review `apps/worker/wrangler.jsonc`: its rate-limit namespace6111 must be unique within your account; `APP_ORIGIN` must exactly match the browser origin. Wrangler can create the Worker when adding its first secret; confirm the account/project name it shows. The privileged Supabase key is never a `VITE_` variable and never installed on the router.
 
-Build the monitoring bundle from the exact clean candidate checkout, using the production browser publishable key in the environment. From the repository root:
-
-```sh
-python3 -B scripts/monitor-bundle.py build "$OUTPUT/monitor-bundle.tar.gz" --source-commit "$COMMIT"
-```
-
-Run the monitoring CI checks and include this file and its SHA-256 in the Stable draft manifest. The protected workflow verifies that digest, deploys the fixed bundle with Wrangler and reports the active Worker version. Rehearse and approve changes to Cloudflare routes and triggers separately before deployment. For a new Worker, apply the approved minute trigger from `apps/worker/wrangler.jsonc` with `pnpm --filter @nicx/worker exec wrangler triggers deploy`. Check that `* * * * *` appears in the Worker’s Cron Triggers before testing scheduled notifications. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+See the [release policy](releases.md#build-inputs) for building and verifying a bundle locally. The standalone production deployment workflow is pending. Keep the existing deployment in place during cutover. Rehearse and approve changes to Cloudflare routes and triggers separately. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 
 ## 3. Domain
 

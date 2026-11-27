@@ -1,6 +1,7 @@
 import argparse
 from dataclasses import dataclass
 import re
+from typing import Optional
 
 NUMBER = r"(?:0|[1-9][0-9]*)"
 TAG = re.compile(rf"v({NUMBER})\.({NUMBER})\.({NUMBER})(?:-beta\.([1-9][0-9]*))?")
@@ -10,7 +11,7 @@ TAG = re.compile(rf"v({NUMBER})\.({NUMBER})\.({NUMBER})(?:-beta\.([1-9][0-9]*))?
 class ReleaseVersion:
     version: str
     series: str
-    beta: str | None
+    beta: Optional[str]
 
     @classmethod
     def parse(cls, tag: str) -> "ReleaseVersion":

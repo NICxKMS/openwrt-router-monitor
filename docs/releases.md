@@ -11,18 +11,21 @@ Use GitHub draft releases to assemble and verify assets before publication. Keep
 Both OpenWrt recipes accept the same explicit `NICX_MONITOR_RELEASE_VERSION` for standalone release builds. In a disposable, prepared OpenWrt APK SDK, follow the [recipe setup](router.md#build-the-two-packages), then pass the mapped version as the environment variable:
 
 ```sh
+SDK=/absolute/path/to/prepared-openwrt-sdk
 tag=v1.0.1-beta.1
-apk_version=$(python3 -B scripts/release_version.py "$tag")
-NICX_MONITOR_RELEASE_VERSION="${apk_version%-r1}" make -C "$SDK" \
+apk_version=$(python3 -B scripts/release_version.py "$tag") &&
+  NICX_MONITOR_RELEASE_VERSION="${apk_version%-r1}" make -C "$SDK" \
   package/nicx-telemetry/compile package/luci-app-nicx-telemetry/compile
 ```
 
 Stable `v1.0.1` maps to `1.0.1-r1`, Beta `v1.0.1-beta.1` to `1.0.1_beta1-r1`. Start above `1.0.0` when replacing legacy `1.0.0-rN` packages. Existing pinned firmware feed builds use their recipe defaults. Before an official release, use actual APK tooling to verify ordering, signatures, dependencies and installation on the supported platform.
 
-Build the web archive from the same clean checkout. Set `VITE_SUPABASE_ANON_KEY` to the target project's browser publishable key, then run:
+Build the web archive from the same clean checkout. Set `VITE_SUPABASE_ANON_KEY` to the target project's browser publishable key and choose an output directory outside the checkout.
 
 ```sh
-python3 -B scripts/monitor-bundle.py build "$OUTPUT/monitor-bundle.tar.gz" \
+OUTPUT=/absolute/path/to/monitor-release-output
+mkdir -p "$OUTPUT" &&
+  python3 -B scripts/monitor-bundle.py build "$OUTPUT/monitor-bundle.tar.gz" \
   --source-commit "$(git rev-parse HEAD)" --channel beta
 ```
 

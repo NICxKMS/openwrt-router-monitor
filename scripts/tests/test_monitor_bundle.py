@@ -47,7 +47,7 @@ class MonitorBundleTest(unittest.TestCase):
         self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID", "NODE_OPTIONS"} & env.keys())
 
     def test_beta_refuses_to_build_against_the_production_database(self):
-        production = {"SUPABASE_URL": "https://production.supabase.co"}
+        production = {"SUPABASE_URL": "https://abcdefghijklmnopqrst.supabase.co"}
         config = {"vars": production, "env": {"beta": {"vars": production}}}
         with self.assertRaisesRegex(ValueError, "distinct"):
             bundle.database_for_build(config, "beta")
