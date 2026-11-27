@@ -23,6 +23,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "jidu6111-monitor-dev-"
+NETWORK_LABEL = "local.jidu6111.project"
 
 
 class NoRedirects(HTTPRedirectHandler):
@@ -133,24 +134,78 @@ def ready(process, url, route):
     raise RuntimeError(f"Development service failed to start at {url}")
 
 
-def stop_process(process):
-    if process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
+def group_members(group):
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
         try:
-            process.wait(timeout=8)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if fields[0] != "Z" and fields[2:4] == [str(group), str(group)]:
+            yield entry
+
+
+def stop_group(group):
+    for sig, seconds in ((signal.SIGTERM, 8), (signal.SIGKILL, 2)):
+        if not any(group_members(group)):
+            return True
+        try:
+            os.killpg(group, sig)
+        except ProcessLookupError:
+            return True
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if not any(group_members(group)):
+                return True
+            time.sleep(0.05)
+    return not any(group_members(group))
+
+
+def stop_process(process):
+    stopped = stop_group(process.pid)
+    process.poll()
+    return stopped
+
+
+def remove_owned_network(project, env):
+    networks = subprocess.check_output(
+        ["docker", "network", "ls", "--filter", f"label={NETWORK_LABEL}={project}", "--format", "{{.Name}}"],
+        env=env, text=True, timeout=10,
+    ).splitlines()
+    if project in networks:
+        subprocess.run(["docker", "network", "rm", project], env=env, check=True, timeout=10)
+
+
+def verify_loopback_ports(project, env):
+    containers = subprocess.check_output(
+        ["docker", "ps", "--filter", f"network={project}", "--format", "{{.ID}}"], env=env, text=True, timeout=10,
+    ).split()
+    if not containers:
+        raise ValueError("Docker did not report containers in the Supabase loopback network")
+    details = json.loads(subprocess.check_output(
+        ["docker", "inspect", *containers], env=env, timeout=10,
+    ))
+    bindings = [
+        binding for container in details
+        for port in (container["NetworkSettings"].get("Ports") or {}).values()
+        for binding in port or ()
+    ]
+    if not bindings or any(binding.get("HostIp") != "127.0.0.1" for binding in bindings):
+        raise ValueError("Docker published a Supabase service outside 127.0.0.1 or did not report its binding")
 
 
 def stop_database(directory, project, env):
-    if not (directory / "supabase/config.toml").is_file():
-        return True
     try:
-        return subprocess.run(
-            ["supabase", "--workdir", str(directory), "stop", "--project-id", project, "--no-backup"],
-            env=env, check=False, timeout=45,
-        ).returncode == 0
+        if (directory / "supabase/config.toml").is_file():
+            result = subprocess.run(
+                ["supabase", "--workdir", str(directory), "stop", "--project-id", project, "--no-backup"],
+                env=env, check=False, timeout=45,
+            )
+            if result.returncode:
+                return False
+        remove_owned_network(project, env)
+        return True
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -169,6 +224,38 @@ def publish_processes(directory, processes):
     temporary.replace(path)
 
 
+def group_has_session(group, directory):
+    marker = os.fsencode(f"NICX_DEV_SESSION={directory}")
+    for entry in group_members(group):
+        try:
+            if marker in (entry / "environ").read_bytes().split(b"\0"):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def stop_recorded_groups(directory):
+    path = directory / "processes.json"
+    if not path.exists():
+        return True
+    stopped = True
+    for group, recorded_start in json.loads(path.read_text()):
+        launcher_matches = recorded_start and start_time(group) == recorded_start
+        if (launcher_matches or group_has_session(group, directory)) and not stop_group(group):
+            stopped = False
+    return stopped
+
+
+def stop_session(directory, project, env):
+    groups_stopped = stop_recorded_groups(directory)
+    database_stopped = stop_database(directory, project, env)
+    if groups_stopped and database_stopped:
+        shutil.rmtree(directory)
+        return True
+    return False
+
+
 def reap_abandoned(env):
     for directory in Path(tempfile.gettempdir()).glob(PREFIX + "*"):
         if directory.is_symlink() or not directory.is_dir():
@@ -182,17 +269,7 @@ def reap_abandoned(env):
                 project = (directory / "project-id").read_text()
                 if not re.fullmatch(r"jidu-dev-[0-9a-f]{12}", project):
                     continue
-                if (directory / "processes.json").exists():
-                    for pid, recorded_start in json.loads((directory / "processes.json").read_text()):
-                        if recorded_start and start_time(pid) == recorded_start:
-                            try:
-                                if os.getpgid(pid) == pid:
-                                    os.killpg(pid, signal.SIGTERM)
-                            except ProcessLookupError:
-                                pass
-                if stop_database(directory, project, env):
-                    shutil.rmtree(directory)
-                else:
+                if not stop_session(directory, project, env):
                     raise RuntimeError(f"Could not remove abandoned local stack {project}")
         except (BlockingIOError, FileNotFoundError):
             continue
@@ -208,9 +285,8 @@ def session_directory(env):
         try:
             yield directory, project
         finally:
-            if not stop_database(directory, project, env):
+            if not stop_session(directory, project, env):
                 raise RuntimeError(f"Could not remove local stack {project}. Retry with --cleanup")
-            shutil.rmtree(directory)
 
 
 def start(check, cleanup):
@@ -218,12 +294,19 @@ def start(check, cleanup):
         if not shutil.which(command):
             raise RuntimeError(f"Install {command} for the disposable monitoring stack")
     env = clean_env()
-    subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], env=env,
-                   check=True, timeout=10, stdout=subprocess.DEVNULL)
+    engine = subprocess.check_output(["docker", "info", "--format", "{{.ServerVersion}}"],
+                                     env=env, text=True, timeout=10).strip()
     reap_abandoned(env)
     if cleanup:
         return
+    major = re.match(r"([0-9]+)\.", engine)
+    if not major or int(major[1]) < 28:
+        raise RuntimeError("Docker Engine 28 or newer is required to isolate published localhost ports")
+    help_text = subprocess.check_output(["supabase", "start", "--help"], env=env, text=True, timeout=10)
+    if "--network-id" not in help_text:
+        raise RuntimeError("Install a Supabase CLI version that supports supabase start --network-id")
     with session_directory(env) as (directory, project):
+        env["NICX_DEV_SESSION"] = str(directory)
         env["WRANGLER_LOG_PATH"] = str(directory / "wrangler-logs")
         env["WRANGLER_SEND_METRICS"] = "false"
         db_ports = open_ports(7)
@@ -233,7 +316,14 @@ def start(check, cleanup):
         processes = []
         try:
             print("Starting a disposable Supabase instance.", flush=True)
-            subprocess.run([*cli, "start"], env=env, check=True, stdout=subprocess.DEVNULL)
+            subprocess.run([
+                "docker", "network", "create", "--driver", "bridge",
+                "--opt", "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+                "--label", f"{NETWORK_LABEL}={project}", project,
+            ], env=env, check=True, stdout=subprocess.DEVNULL, timeout=15)
+            subprocess.run([*cli, "start", "--network-id", project], env=env,
+                           check=True, stdout=subprocess.DEVNULL)
+            verify_loopback_ports(project, env)
             status = json.loads(subprocess.check_output([*cli, "status", "--output", "json"], env=env))
             origin = urlsplit(status["API_URL"])
             if origin.hostname not in {"localhost", "127.0.0.1"} or origin.port != db_ports[0]:
@@ -263,12 +353,19 @@ def start(check, cleanup):
             ], cwd=ROOT, env={
                 **env, "VITE_SUPABASE_URL": local_url(db_ports[0]), "VITE_SUPABASE_ANON_KEY": publishable,
                 "VITE_API_URL": local_url(worker_port), "NICX_DEV_ENV_DIR": str(directory),
+                "VITE_NICX_DEV_LOOPBACK": "1",
             }, start_new_session=True)
             processes.append(dashboard)
             publish_processes(directory, processes)
             ready(dashboard, local_url(dashboard_port), "/")
-            print("The simulated router sample reached the local owner dashboard data.", flush=True)
-            if not check:
+            if check:
+                subprocess.run(["node", "tests/browser/development-smoke.mjs"], cwd=ROOT, env={
+                    **env, "NICX_DEV_DASHBOARD": local_url(dashboard_port),
+                    "NICX_DEV_FIXTURE_EMAIL": email, "NICX_DEV_FIXTURE_PASSWORD": password,
+                }, check=True, timeout=45)
+                print("The dashboard displayed the simulated router after owner sign-in.", flush=True)
+            else:
+                print("The local database accepted the simulated router sample.", flush=True)
                 print(f"Dashboard {local_url(dashboard_port)}\nFixture email {email}\nFixture password {password}",
                       flush=True)
                 print("Press Ctrl+C to stop and remove this session.", flush=True)

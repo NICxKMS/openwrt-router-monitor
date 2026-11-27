@@ -42,6 +42,36 @@ class Dashboard:
         self.lock = Lock()
         self.state_lock = Lock()
         self.job = None
+        self.update_versions = None
+        self.updates = set()
+        self.refresh_updates()
+
+    def refresh_updates(self):
+        versions = {
+            name: (package["version"], self.available[name]["version"])
+            for name, package in self.installed.items()
+            if name != "kernel" and name in self.available and package["version"] != self.available[name]["version"]
+        }
+        if versions == self.update_versions:
+            return
+        self.updates = set()
+        self.update_versions = None
+        if versions:
+            # Compare the installed/feed pairs in one read-only SSH command.
+            compare = 'while [ "$#" -ge 2 ]; do apk version --test -- "$1" "$2" || exit; shift 2; done'
+            arguments = [version for pair in versions.values() for version in pair]
+            try:
+                result = self.remote(
+                    ["sh", "-c", compare, "apk-versions", *arguments],
+                    capture=True, check=False, stderr=subprocess.STDOUT,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return
+            comparisons = result.stdout.splitlines()
+            if result.returncode or len(comparisons) != len(versions) or set(comparisons) - {"<", "=", ">"}:
+                return
+            self.updates = {name for name, order in zip(versions, comparisons) if order == "<"}
+        self.update_versions = versions
 
     def catalog(self):
         entries = self.available | {
@@ -63,7 +93,8 @@ class Dashboard:
                     "installed": self.installed.get(name, {}).get("version"),
                     "title": self.featured.get(name),
                     "available": name in self.available,
-                    "size": entry.get("installed-size", 0),
+                    "update_available": name in self.updates,
+                    "size": entry.get("installed-size"),
                     "download": entry.get("file-size", 0),
                     "depends": entry.get("depends", []),
                     "license": entry.get("license", ""),
@@ -81,6 +112,7 @@ class Dashboard:
         self.checked_at = time.time()
         if self.installed.get("kernel", {}).get("version") != self.kernel:
             raise RuntimeError("The router firmware changed. Restart the installer with its matching feed.")
+        self.refresh_updates()
 
     def transaction(self, names, *, simulate):
         options = ["--simulate"] if simulate else []
@@ -104,16 +136,13 @@ class Dashboard:
             or any(not isinstance(name, str) or name not in self.available for name in names)
         ):
             return 400, {"message": "Choose packages from the signed feed."}
+        if upgrade and (len(names) != 1 or names[0] == "kernel"):
+            return 400, {"message": "Choose one installed package to update."}
         self.sync()
         if upgrade:
-            if len(names) != 1 or names[0] == "kernel" or names[0] not in self.installed:
+            if names[0] not in self.installed:
                 return 400, {"message": "Choose one installed package to update."}
-            name = names[0]
-            comparison = self.remote(
-                [*self.apk, "version", "--test", "--", self.installed[name]["version"], self.available[name]["version"]],
-                capture=True, check=False, stderr=subprocess.STDOUT,
-            )
-            if comparison.returncode or comparison.stdout.strip() != "<":
+            if names[0] not in self.updates:
                 return 400, {"message": "This signed feed has no newer version of the selected package."}
         else:
             names = list(dict.fromkeys(name for name in names if name not in self.installed))
@@ -168,6 +197,8 @@ class Dashboard:
             self.job = {
                 "id": secrets.token_urlsafe(12), "state": "running", "output": "",
                 "names": preview["names"], "started": time.time(), "success": None,
+                "preview_id": preview["id"], "apk_exit": None,
+                "versions": {name: self.available[name]["version"] for name in preview["names"]},
                 "upgrade": preview["upgrade"],
                 "message": "Updating the selected package…" if preview["upgrade"] else "Installing packages on the router…",
             }
@@ -182,32 +213,49 @@ class Dashboard:
         with self.state_lock:
             self.job["output"] = (self.job["output"] + line)[-262144:]
 
+    def reconcile_inventory(self):
+        # Called with state_lock held after a successful installed-package read.
+        job = self.job
+        matched = all(self.installed.get(name, {}).get("version") == version
+                      for name, version in job["versions"].items())
+        success = matched and job["apk_exit"] in (None, 0)
+        if success:
+            message = "Package updated." if job["upgrade"] else "Packages installed."
+        elif job["apk_exit"] not in (None, 0):
+            message = "APK reported an error during the reviewed changes. Check the log."
+        else:
+            message = "The router does not report all the requested package versions."
+        job.update(state="finished", success=success, message=message)
+
     def run_install(self, names):
-        success = False
+        code = None
+        verified = False
         try:
             pinned = [f"{name}={self.available[name]['version']}" for name in names]
-            code = self.remote(
+            result = self.remote(
                 [*self.apk, "--progress=no", "add", "--", *pinned],
                 on_output=self.append_output,
             )
+            code = None if result == 255 else result
             self.sync()
-            success = code == 0 and all(
-                self.installed.get(name, {}).get("version") == self.available[name]["version"]
-                for name in names
-            )
-            if success:
-                message = "Package updated." if self.job["upgrade"] else "Packages installed."
-            else:
-                message = "APK could not complete the reviewed changes. Check the log."
+            verified = True
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             self.connected = False
-            message = "The connection was interrupted. Refresh router status to check which packages installed."
             self.append_output(f"\n{error}\n")
         with self.state_lock:
-            self.job.update(
-                state="finished", success=success, message=message,
-                finished=time.time(),
-            )
+            self.job.update(apk_exit=code, finished=time.time())
+            if verified:
+                self.reconcile_inventory()
+            elif code not in (None, 0):
+                self.job.update(
+                    state="finished", success=False,
+                    message="APK reported an error. Select Refresh to check the installed packages.",
+                )
+            else:
+                self.job.update(
+                    state="unverified", success=None,
+                    message="The result is unverified. Select Refresh to check the installed package versions.",
+                )
 
     def busy(self):
         job = self.job_status()
@@ -219,6 +267,9 @@ class Dashboard:
         except (OSError, ValueError, subprocess.SubprocessError):
             self.connected = False
             return 503, {"message": "The router could not be reached. Check its connection, then try Refresh."}
+        with self.state_lock:
+            if self.job and self.job["state"] == "unverified":
+                self.reconcile_inventory()
         return 200, self.catalog()
 
 
@@ -343,7 +394,9 @@ def serve_dashboard(dashboard, *, launch_browser):
         try:
             server.serve_forever()
         finally:
-            # Let APK finish its active transaction if Ctrl+C closes the dashboard.
+            with dashboard.lock:
+                dashboard.closing = True
+            # Also wait for installs admitted just before Ctrl+C.
             if dashboard.busy():
                 print("Finishing the active installation before closing…", flush=True)
             while dashboard.busy():

@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -29,11 +30,20 @@ class PackageInstallerTests(unittest.TestCase):
     def test_manual_feed_bypasses_github(self, remote, packages, install_with_feed, select):
         remote.return_value = subprocess.CompletedProcess([], 0, INSTALLER.BOARD + "\n")
         packages.return_value = {"kernel": {"version": "6.18.60~matching-r1"}}
-        INSTALLER.install(
-            "192.0.2.1", Path("known-local-feed"), terminal=False, launch_browser=False
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            local = Path(temporary)
+            (local / "packages.adb").write_bytes(b"signed index")
+            (local / "htop-1.0-r1.apk").write_bytes(b"signed package")
+            def served(*args, **kwargs):
+                snapshot = args[4]
+                self.assertNotEqual(snapshot, local)
+                (local / "packages.adb").write_bytes(b"new index")
+                (local / "htop-1.0-r1.apk").write_bytes(b"new package")
+                self.assertEqual((snapshot / "packages.adb").read_bytes(), b"signed index")
+                self.assertEqual((snapshot / "htop-1.0-r1.apk").read_bytes(), b"signed package")
+            install_with_feed.side_effect = served
+            INSTALLER.install("192.0.2.1", local, terminal=False, launch_browser=False)
         self.assertFalse(select.called)
-        self.assertEqual(install_with_feed.call_args.args[4], Path("known-local-feed"))
 
     @patch.object(INSTALLER, "download_feed")
     @patch.object(INSTALLER, "select_feed")
@@ -64,6 +74,33 @@ class PackageInstallerTests(unittest.TestCase):
         self.assertEqual(channel, "development")
         self.assertIsNone(profile)
         self.assertEqual(install_with_feed.call_args.args[4], Path("verified"))
+
+    @patch("builtins.input", side_effect=["1", "y", "n", "q"])
+    @patch.object(INSTALLER, "remote")
+    def test_terminal_requires_new_confirmation_if_plan_changes(self, remote, answer):
+        remote.side_effect = [
+            subprocess.CompletedProcess([], 0, "original plan"),
+            subprocess.CompletedProcess([], 0, "updated plan"),
+        ]
+        INSTALLER.package_menu(["ssh"], ["apk"], {}, {"htop": {"version": "1.0-r1"}})
+        self.assertEqual(remote.call_count, 2)
+        self.assertTrue(all("--simulate" in call.args[1] for call in remote.call_args_list))
+
+    @patch("builtins.input", side_effect=["1", "y", "q"])
+    @patch.object(INSTALLER, "packages")
+    @patch.object(INSTALLER, "remote")
+    def test_terminal_applies_exact_confirmation_without_discovery_timeout(self, remote, packages, answer):
+        remote.side_effect = [
+            subprocess.CompletedProcess([], 0, "approved plan"),
+            subprocess.CompletedProcess([], 0, "approved plan"),
+            subprocess.CompletedProcess([], 0),
+        ]
+        packages.return_value = {"htop": {"version": "1.0-r1"}}
+        INSTALLER.package_menu(["ssh"], ["apk"], {}, {"htop": {"version": "1.0-r1"}})
+        self.assertEqual(remote.call_count, 3)
+        self.assertIsNone(remote.call_args.kwargs["timeout"])
+        self.assertEqual(remote.call_args.args[1], ["apk", "--progress=no", "add", "--", "htop=1.0-r1"])
+        self.assertEqual(packages.call_count, 1)
 
 
 if __name__ == "__main__":

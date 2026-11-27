@@ -267,7 +267,7 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); display: block
   .queue[data-selection="false"] :is(.queue-actions, .queue-empty) { display: none; }
   .queue-actions { display: flex; gap: 8px; padding: 8px 14px; }
   .queue-actions .primary { flex: 1; }
-  .main-area:has(.queue[data-empty="false"]) { padding-bottom: 160px; }
+  .main-area:has(.queue[data-empty="false"]) { padding-bottom: calc(var(--mobile-queue-height, 160px) + 16px); }
   .active-job { padding: 9px 13px; }
   .active-job p { display: none; }
   .active-job .button { margin-left: 10px; }

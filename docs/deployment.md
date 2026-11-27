@@ -35,7 +35,7 @@ Build the monitoring bundle from the exact clean candidate checkout, using the p
 python3 -B scripts/monitor-bundle.py build "$OUTPUT/monitor-bundle.tar.gz" --source-commit "$COMMIT"
 ```
 
-Run the monitoring CI checks and include this file and its SHA-256 in the Stable draft manifest. The protected workflow verifies that digest, deploys the fixed bundle with Wrangler and reports the active Worker version. Rehearse and approve changes to Cloudflare routes and triggers separately before deployment.
+Run the monitoring CI checks and include this file and its SHA-256 in the Stable draft manifest. The protected workflow verifies that digest, deploys the fixed bundle with Wrangler and reports the active Worker version. Rehearse and approve changes to Cloudflare routes and triggers separately before deployment. For a new Worker, apply the approved minute trigger from `apps/worker/wrangler.jsonc` with `pnpm --filter @nicx/worker exec wrangler triggers deploy`. Check that `* * * * *` appears in the Worker’s Cron Triggers before testing scheduled notifications. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 
 ## 3. Domain
 
@@ -97,7 +97,7 @@ python3 -B scripts/promotion.py record-agent --version "$AGENT_VERSION" \
   --installed-at "$INSTALLED_AT" --received-at "$RECEIVED_AT"
 ```
 
-Dispatch the workflow with the verified inputs and approve the matching GitHub environment request:
+For a change that deploys a Worker, dispatch the workflow with the verified inputs and approve the matching GitHub environment request. For other promotions, continue directly to live verification.
 
 ```sh
 set -o pipefail

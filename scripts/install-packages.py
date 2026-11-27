@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import contextmanager
+import filecmp
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -10,6 +11,7 @@ import ipaddress
 import re
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -17,7 +19,7 @@ from threading import Thread
 from urllib.parse import unquote, urlsplit
 
 from package_dashboard import Dashboard, serve_dashboard
-from release_feed import APK_NAME, SHA256, RouterIdentity, download_feed, select_feed
+from release_feed import APK_NAME, FEED_LIMIT, SHA256, RouterIdentity, download_feed, select_feed
 
 
 BOARD = "jiorouter,ax6000-jidu6111"
@@ -128,17 +130,59 @@ def package_menu(ssh, apk, installed, available):
             print("Those packages are already installed.")
             continue
 
-        print(f"Preview for {', '.join(pending)}", flush=True)
-        preview = remote(ssh, [*apk, "--simulate", "add", "--", *pending], check=False)
-        if preview.returncode:
-            print("APK could not resolve the installation. Review the output above.")
-            continue
-        if input("Install these changes? [y/N] ").strip().lower() not in ("y", "yes"):
-            continue
-        result = remote(ssh, [*apk, "add", "--", *pending], check=False)
-        if result.returncode:
-            print("APK reported an installation error. Review the output above.")
-        installed = packages(ssh, APK, "installed")
+        pinned = [f"{name}={available[name]['version']}" for name in pending]
+        command = [*apk, "--progress=no"]
+        simulate = [*command, "--simulate", "add", "--", *pinned]
+        preview = remote(ssh, simulate, capture=True, check=False, stderr=subprocess.STDOUT)
+        while True:
+            print(f"Preview for {', '.join(pending)}", flush=True)
+            print(preview.stdout)
+            if preview.returncode:
+                print("APK could not resolve the installation.")
+                break
+            if input("Install these changes? [y/N] ").strip().lower() not in ("y", "yes"):
+                break
+            fresh = remote(ssh, simulate, capture=True, check=False, stderr=subprocess.STDOUT)
+            if fresh.returncode or fresh.stdout != preview.stdout:
+                print("The package plan changed. Review the current plan before confirming.")
+                preview = fresh
+                continue
+            try:
+                result = remote(ssh, [*command, "add", "--", *pinned], check=False, timeout=None)
+                code = result.returncode
+            except (OSError, subprocess.SubprocessError):
+                code = 255
+            if code == 255:
+                print("The connection was interrupted. Checking installed package versions before another attempt.")
+            try:
+                installed = packages(ssh, APK, "installed")
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                raise RuntimeError("Reconnect and check the installed packages before retrying.") from error
+            matched = all(installed.get(name, {}).get("version") == available[name]["version"] for name in pending)
+            if code in (0, 255) and matched:
+                print("The requested package versions are installed.")
+            else:
+                print("APK did not verify the reviewed changes. Check the output and installed packages.")
+            break
+
+
+def snapshot_feed(source, destination):
+    index = source / "packages.adb"
+    packages = sorted(path for path in source.iterdir() if APK_NAME.fullmatch(path.name))
+    if not index.is_file() or not packages:
+        raise RuntimeError(f"No signed package feed in {source}. Use a directory with packages.adb and APK files.")
+    paths = [index, *packages]
+    if any(not path.is_file() for path in paths):
+        raise RuntimeError("The local feed contains an APK that is missing or is not a regular file.")
+    size = sum(path.stat().st_size for path in paths)
+    if size > min(FEED_LIMIT, shutil.disk_usage(destination.parent).free):
+        raise RuntimeError("There is insufficient temporary storage for the local package feed.")
+    destination.mkdir()
+    for path in paths:
+        shutil.copyfile(path, destination / path.name)
+    if not filecmp.cmp(index, destination / index.name, shallow=False):
+        raise RuntimeError("The local package feed changed while copying. Retry once its build finishes.")
+    return destination
 
 
 @contextmanager
@@ -250,7 +294,8 @@ def install(router, feed, *, channel="auto", profile=None, terminal, launch_brow
                 # APK still checks the local index against the router's trusted keys.
                 identity = RouterIdentity(board, "", kernel, frozenset())
                 label = "Local signed package feed"
-                print(f"Using signed packages from {feed}", flush=True)
+                print(f"Staging signed packages from {feed}", flush=True)
+                feed = snapshot_feed(feed, workspace / "feed")
             install_with_feed(
                 connection, forward, address, router, feed, label, identity, installed,
                 terminal=terminal, launch_browser=launch_browser,

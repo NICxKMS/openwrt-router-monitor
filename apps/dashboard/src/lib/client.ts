@@ -3,7 +3,16 @@ import {boundedFetch,withTimeout} from './async';
 const url=import.meta.env.VITE_SUPABASE_URL as string|undefined;
 const key=import.meta.env.VITE_SUPABASE_ANON_KEY as string|undefined;
 export const apiUrl=(import.meta.env.VITE_API_URL as string|undefined)?.replace(/\/$/,'')||'';
-function validConfiguration(url:string|undefined,key:string|undefined){if(!url||!key||/YOUR_|CHANGE_ME|REPLACE_ME/i.test(url+' '+key))return false;try{return new URL(url).protocol==='https:';}catch{return false;}}
+function validConfiguration(url:string|undefined,key:string|undefined){
+  if(!url||!key||/YOUR_|CHANGE_ME|REPLACE_ME/i.test(url+' '+key))return false;
+  try{
+    const endpoint=new URL(url);
+    if(endpoint.protocol==='https:')return true;
+    return import.meta.env.DEV&&import.meta.env.VITE_NICX_DEV_LOOPBACK==='1'
+      &&endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&!!endpoint.port
+      &&!endpoint.username&&!endpoint.password;
+  }catch{return false;}
+}
 export const configured=validConfiguration(url,key);
 export const db=configured?createClient(url!,key!,{auth:{flowType:'pkce',detectSessionInUrl:true,autoRefreshToken:true,persistSession:true},global:{fetch:boundedFetch}}):null;
 export async function ownerApi(path:string,body?:unknown,method='POST',signal?:AbortSignal) {

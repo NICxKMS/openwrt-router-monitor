@@ -57,7 +57,7 @@ const dialog = el("review-dialog");
 const details = el("detail-dialog");
 const state = {
   packages: new Map(), selected: new Set(), view: "featured", page: 0,
-  online: false, busy: false, closed: false, preview: null, job: null,
+  online: false, busy: false, closed: false, preview: null, job: null, submittedPreview: null,
   data: null, queueKey: "", restored: false, detail: null, pollTimer: null,
 };
 
@@ -161,7 +161,7 @@ function renderFilters() {
       const count = [...state.packages.values()].filter((pkg) => {
         if (key === "all") return pkg.available;
         if (key === "installed") return pkg.installed;
-        if (key === "featured") return !!featured[pkg.name];
+        if (key === "featured") return pkg.available && Object.hasOwn(featured, pkg.name);
         return pkg.available && pkg.category === key;
       }).length;
       button.append(makeElement("small", count));
@@ -187,7 +187,7 @@ function toggleSelection(name) {
   renderQueue();
 }
 function hasUpdateCandidate(pkg) {
-  return pkg.available && pkg.installed && pkg.installed !== pkg.version && pkg.name !== "kernel";
+  return pkg?.update_available === true;
 }
 function packageCard(pkg) {
   const card = el("package-card").content.firstElementChild.cloneNode(true);
@@ -246,7 +246,7 @@ function renderCatalog() {
     if (state.view !== "installed" && !pkg.available) return false;
     const searchable = [pkg.title, pkg.name, pkg.description, categories[pkg.category][0]].join(" ").toLowerCase();
     if (!query.split(/\s+/).every((part) => searchable.includes(part))) return false;
-    if (state.view === "featured") return !!featured[pkg.name];
+    if (state.view === "featured") return Object.hasOwn(featured, pkg.name);
     if (state.view === "installed") return !!pkg.installed;
     return state.view === "all" || state.view === pkg.category;
   });
@@ -254,7 +254,7 @@ function renderCatalog() {
   const rank = (pkg) => order.includes(pkg.name) ? order.indexOf(pkg.name) : order.length;
   const sort = el("sort").value;
   matches.sort((a, b) => {
-    if (sort === "size") return (a.size || Infinity) - (b.size || Infinity) || a.name.localeCompare(b.name);
+    if (sort === "size") return (a.size ?? Infinity) - (b.size ?? Infinity) || a.name.localeCompare(b.name);
     if (sort === "recommended") return rank(a) - rank(b) || a.name.localeCompare(b.name);
     return a.name.localeCompare(b.name);
   });
@@ -511,7 +511,7 @@ function displayJob() {
   const job = state.job;
   const active = job.state === "running";
   step(active ? "install" : "done");
-  el("review-title").textContent = job.upgrade
+  el("review-title").textContent = job.state === "unverified" ? "Check installed package versions" : job.upgrade
     ? active ? "Updating your package" : job.success ? "Package updated" : "Package update needs attention"
     : active ? "Installing your packages" : job.success ? "Installation complete" : "Installation needs attention";
   el("review-message").textContent = active ? "You can keep browsing. Keep the WSL terminal open while installation runs." : job.message;
@@ -540,39 +540,87 @@ function schedulePoll() {
   clearTimeout(state.pollTimer);
   if (running() && !state.closed) state.pollTimer = setTimeout(pollJob, 700);
 }
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+async function refreshCatalogAfterJob() {
+  const jobId = state.job.id;
+  for (const interval of [0, 350, 700]) {
+    if (interval) await delay(interval);
+    if (state.closed || state.job?.id !== jobId) return;
+    try {
+      const catalog = await api("catalog");
+      if (state.closed || state.job?.id !== jobId) return;
+      updateCatalog(catalog);
+      showNotice(state.job.message, state.job.success !== true);
+      return;
+    } catch {
+      // A completed job no longer polls, so catalog recovery has its own retries.
+    }
+  }
+  if (!state.closed && state.job?.id === jobId) {
+    setConnection(false, "Catalog needs refresh");
+    showNotice("Installation status is available. Select Refresh to check the package list.", true);
+  }
+}
 async function pollJob() {
   try {
     const job = await api("job");
-    if (!job) return;
-    state.job = job;
-    displayJob();
-    if (!running()) {
-      updateCatalog(await api("catalog"));
-      showNotice(job.message, !job.success);
-      renderCatalog();
+    if (job) {
+      state.job = job;
+      displayJob();
+      if (!running()) await refreshCatalogAfterJob();
     }
   } catch (error) {
     showNotice(error.message + " Rechecking installation status…", true);
   }
   schedulePoll();
 }
+async function findSubmittedJob(previewId) {
+  for (const interval of [0, 350, 700, 1400]) {
+    if (interval) await delay(interval);
+    try {
+      const job = await api("job");
+      if (job?.preview_id === previewId) return job;
+    } catch {
+      // Reconcile the submitted preview with read-only status. Never resend it.
+    }
+  }
+  return null;
+}
 async function installSelection() {
   if (!state.preview || state.busy) return;
+  const previewId = state.preview.id;
+  state.preview = null;
   setBusy(true);
   el("review-message").textContent = "Checking the reviewed plan before installation…";
   try {
-    state.job = await api("install", { id: state.preview.id });
-    state.preview = null;
+    let job;
+    try {
+      job = await api("install", { id: previewId });
+    } catch (error) {
+      if (error.status >= 400 && error.status < 500) {
+        el("review-title").textContent = "Review the queue again";
+        el("review-message").textContent = error.message;
+        el("confirm-install").hidden = true;
+        return;
+      }
+      state.submittedPreview = previewId;
+      el("review-message").textContent = "Checking whether the submitted installation started…";
+      job = await findSubmittedJob(previewId);
+      if (!job) {
+        el("review-title").textContent = "Check installation status";
+        el("review-message").textContent = "The response was interrupted. Select Refresh before reviewing another installation.";
+        el("confirm-install").hidden = true;
+        setConnection(false, "Installation status unknown");
+        return;
+      }
+    }
+    state.submittedPreview = null;
+    state.job = job;
     displayJob();
     if (running()) schedulePoll();
-    else {
-      updateCatalog(await api("catalog"));
-      showNotice(state.job.message, !state.job.success);
-    }
-  } catch (error) {
-    el("review-title").textContent = "Review the queue again";
-    el("review-message").textContent = error.message;
-    el("confirm-install").hidden = true;
+    else await refreshCatalogAfterJob();
   } finally {
     setBusy(false);
     el("back").focus();
@@ -600,6 +648,12 @@ el("mobile-filter").addEventListener("change", () => {
   renderFilters();
   renderCatalog();
 });
+const queuePanel = document.querySelector(".queue");
+const mainArea = document.querySelector(".main-area");
+new ResizeObserver(() => {
+  const height = Math.ceil(queuePanel.getBoundingClientRect().height);
+  mainArea.style.setProperty("--mobile-queue-height", height + "px");
+}).observe(queuePanel, { box: "border-box" });
 el("toggle-queue").addEventListener("click", () => {
   const expanded = el("toggle-queue").getAttribute("aria-expanded") !== "true";
   el("toggle-queue").setAttribute("aria-expanded", String(expanded));
@@ -667,8 +721,29 @@ el("refresh").addEventListener("click", async () => {
   if (state.busy || running()) return;
   setBusy(true);
   try {
+    if (state.submittedPreview) {
+      const job = await api("job");
+      if (job?.preview_id === state.submittedPreview) {
+        state.submittedPreview = null;
+        state.job = job;
+        displayJob();
+        if (running()) {
+          schedulePoll();
+          return;
+        }
+      }
+    }
+    const previous = state.job;
     updateCatalog(await api("refresh", {}));
-    showNotice("Router status refreshed.");
+    state.submittedPreview = null;
+    if (state.job && (state.job !== previous || previous?.state === "unverified")) {
+      displayJob();
+    }
+    if (previous?.state === "unverified" && state.job?.state === "finished") {
+      showNotice(state.job.message, state.job.success !== true);
+    } else {
+      showNotice("Router status refreshed.");
+    }
   } catch (error) {
     setConnection(false, "Router disconnected");
     showNotice(error.message, true);

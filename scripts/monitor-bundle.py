@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MONITOR = ROOT / "nicx-router-monitor"
 REQUIRED = {"bundle.json", "worker.js", "dashboard/index.html"}
 MAX_BYTES = 96 * 1024 * 1024
+MAX_MEMBERS = 4096
 
 
 def bundle_path(name):
@@ -38,7 +39,7 @@ def unpack(archive_path, destination, expected_commit):
         for member in archive:
             path = bundle_path(member.name)
             size += member.size
-            if not member.isfile() or path in files or size > MAX_BYTES or len(files) >= 4096:
+            if not member.isfile() or path in files or size > MAX_BYTES or len(files) >= MAX_MEMBERS:
                 raise ValueError("Unsafe or oversized monitoring bundle")
             files[path] = member
         if not REQUIRED <= {str(file) for file in files}:
@@ -67,21 +68,28 @@ def pack(destination, worker, dashboard, source_commit):
         raise ValueError("Worker bundle or dashboard build is missing")
     if any(file.is_symlink() for file in assets):
         raise ValueError("Dashboard assets must be regular files")
+    metadata = json.dumps({"source_commit": source_commit}, sort_keys=True).encode()
+    files = [("worker.js", worker)]
+    files.extend(("dashboard/" + file.relative_to(dashboard).as_posix(), file)
+                 for file in assets if file.is_file())
+    if 1 + len(files) > MAX_MEMBERS:
+        raise ValueError("Monitoring bundle exceeds the allowed file count")
+    entries = []
+    for name, path in files:
+        bundle_path(name)
+        entry = tarfile.TarInfo(name)
+        entry.size = path.stat().st_size
+        entries.append((entry, path))
+    if len(metadata) + sum(entry.size for entry, _ in entries) > MAX_BYTES:
+        raise ValueError("Monitoring bundle exceeds the allowed uncompressed size")
     with destination.open("xb") as output:
         try:
             with gzip.GzipFile(fileobj=output, filename="", mode="wb", mtime=0) as compressed:
                 with tarfile.open(fileobj=compressed, mode="w") as archive:
-                    metadata = json.dumps({"source_commit": source_commit}, sort_keys=True).encode()
                     entry = tarfile.TarInfo("bundle.json")
                     entry.size = len(metadata)
                     archive.addfile(entry, io.BytesIO(metadata))
-                    files = [("worker.js", worker)]
-                    files.extend(("dashboard/" + file.relative_to(dashboard).as_posix(), file)
-                                 for file in assets if file.is_file())
-                    for name, path in files:
-                        bundle_path(name)
-                        entry = tarfile.TarInfo(name)
-                        entry.size = path.stat().st_size
+                    for entry, path in entries:
                         with path.open("rb") as asset:
                             archive.addfile(entry, asset)
         except BaseException:
@@ -89,28 +97,44 @@ def pack(destination, worker, dashboard, source_commit):
             raise
 
 
+def build_environment(scratch, supabase_url, publishable_key):
+    env = {name: os.environ[name] for name in ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ") if name in os.environ}
+    env.update(
+        HOME=str(scratch),
+        TMPDIR=str(scratch),
+        XDG_CONFIG_HOME=str(scratch / "config"),
+        XDG_CACHE_HOME=str(scratch / "cache"),
+        XDG_DATA_HOME=str(scratch / "data"),
+        CI="true",
+        VITE_SUPABASE_URL=supabase_url,
+        VITE_SUPABASE_ANON_KEY=publishable_key,
+        VITE_API_URL="",
+        WRANGLER_SEND_METRICS="false",
+        WRANGLER_LOG_PATH=str(scratch / "logs"),
+    )
+    return env
+
+
 def build(destination, source_commit):
-    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    status = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)
-    if actual != source_commit or status:
-        raise ValueError("Build a production bundle from a clean checkout of the exact candidate")
     key = os.environ.get("VITE_SUPABASE_ANON_KEY", "")
     if not key:
         raise ValueError("Set VITE_SUPABASE_ANON_KEY to the production browser publishable key")
-    config = json.loads((MONITOR / "apps/worker/wrangler.jsonc").read_text())
-    env = {name: value for name, value in os.environ.items()
-           if not name.startswith(("CLOUDFLARE_", "VITE_", "SUPABASE_", "WRANGLER_"))}
-    env.update(VITE_SUPABASE_URL=config["vars"]["SUPABASE_URL"], VITE_SUPABASE_ANON_KEY=key,
-               VITE_API_URL="", WRANGLER_SEND_METRICS="false")
+    config_path = MONITOR / "apps/worker/wrangler.jsonc"
+    config = json.loads(config_path.read_text())
     with tempfile.TemporaryDirectory(prefix="jidu6111-monitor-bundle-") as work:
         scratch = Path(work)
-        env["WRANGLER_LOG_PATH"] = str(scratch / "logs")
+        env = build_environment(scratch, config["vars"]["SUPABASE_URL"], key)
+        actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, env=env, text=True).strip()
+        status = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, env=env, text=True)
+        if actual != source_commit or status:
+            raise ValueError("Build a production bundle from a clean checkout of the exact candidate")
         dashboard = scratch / "dashboard"
         worker = scratch / "worker"
         subprocess.run(["pnpm", "--filter", "@nicx/dashboard", "build", "--outDir", str(dashboard)],
                        cwd=MONITOR, env=env, check=True)
         subprocess.run(["pnpm", "--filter", "@nicx/worker", "exec", "wrangler", "versions", "upload",
-                        "--dry-run", "--outdir", str(worker), "--assets", str(dashboard)],
+                        "--config", str(config_path), "--dry-run", "--outdir", str(worker),
+                        "--assets", str(dashboard)],
                        cwd=MONITOR, env=env, check=True)
         pack(destination, worker / "index.js", dashboard, source_commit)
 

@@ -1,5 +1,10 @@
 import fcntl
 import importlib.util
+import os
+import signal
+import subprocess
+import sys
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +32,43 @@ class DevStackTest(unittest.TestCase):
             self.assertNotIn("routes", worker)
             self.assertNotIn("account_id", worker)
             self.assertNotIn("SUPABASE_SERVICE_ROLE_KEY", worker["vars"])
+
+    def test_cleanup_stops_a_service_after_its_launcher_exits(self):
+        launcher = subprocess.Popen([
+            sys.executable, "-c",
+            "import subprocess,sys; print(subprocess.Popen([sys.executable, '-c', "
+            "'import time; time.sleep(30)'], stdout=subprocess.DEVNULL).pid)",
+        ], start_new_session=True, stdout=subprocess.PIPE, text=True)
+        pid = int(launcher.communicate(timeout=5)[0])
+        self.assertEqual(launcher.returncode, 0)
+        def running():
+            try:
+                return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+            except FileNotFoundError:
+                return False
+        try:
+            self.assertTrue(running())
+            stack.stop_process(launcher)
+            until = time.monotonic() + 2
+            while running() and time.monotonic() < until:
+                time.sleep(0.05)
+            self.assertFalse(running())
+        finally:
+            try:
+                os.killpg(launcher.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def test_rejects_any_non_loopback_published_supabase_service(self):
+        local = {"NetworkSettings": {"Ports": {"8000/tcp": [{"HostIp": "127.0.0.1"}]}}}
+        wildcard = {"NetworkSettings": {"Ports": {"5432/tcp": [{"HostIp": "0.0.0.0"}]}}}
+        with patch.object(stack.subprocess, "check_output", side_effect=["a", "[%s]" % stack.json.dumps(local)]):
+            stack.verify_loopback_ports("jidu-dev-test", {})
+        with patch.object(stack.subprocess, "check_output", side_effect=[
+            "a b", stack.json.dumps([local, wildcard]),
+        ]):
+            with self.assertRaisesRegex(ValueError, "outside 127"):
+                stack.verify_loopback_ports("jidu-dev-test", {})
 
     def test_cleanup_preserves_active_sessions(self):
         with tempfile.TemporaryDirectory() as directory:
