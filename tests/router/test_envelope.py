@@ -741,7 +741,7 @@ rm -f "$STATE/auth"
         # A reparented zombie cannot write; a live descendant is a regression.
         try:
             stat = Path(f'/proc/{pid}/stat').read_text()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             pass
         else:
             self.assertEqual(stat.rsplit(') ', 1)[1].split()[0], 'Z')
