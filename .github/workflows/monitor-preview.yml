@@ -1,10 +1,5 @@
 name: Cloudflare Development Preview
 on:
-  workflow_call:
-    inputs:
-      source_commit:
-        type: string
-        required: true
   workflow_dispatch:
     inputs:
       source_commit:
@@ -15,13 +10,12 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: jidu6111-development-preview
+  group: monitor-development-preview
   cancel-in-progress: false
 
 jobs:
   preview:
-    # Enable after the standalone Preview environment is configured and approved.
-    if: ${{ false }}
+    if: github.ref == 'refs/heads/development' && github.ref_protected
     runs-on: ubuntu-latest
     environment: development-preview
     timeout-minutes: 15
@@ -30,6 +24,14 @@ jobs:
       NICX_PREVIEW_SUPABASE_URL: ${{ vars.NICX_PREVIEW_SUPABASE_URL }}
       NICX_PREVIEW_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NICX_PREVIEW_SUPABASE_PUBLISHABLE_KEY }}
     steps:
+      - name: Verify the requested Development commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_COMMIT" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/development" --jq .object.sha)" = "$GITHUB_SHA"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
