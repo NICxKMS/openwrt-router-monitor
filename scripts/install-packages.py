@@ -180,7 +180,7 @@ def snapshot_feed(source, destination):
     destination.mkdir()
     for path in paths:
         shutil.copyfile(path, destination / path.name)
-    if not filecmp.cmp(index, destination / index.name, shallow=False):
+    if any(not filecmp.cmp(path, destination / path.name, shallow=False) for path in paths):
         raise RuntimeError("The local package feed changed while copying. Retry once its build finishes.")
     return destination
 

@@ -45,6 +45,25 @@ class PackageInstallerTests(unittest.TestCase):
             INSTALLER.install("192.0.2.1", local, terminal=False, launch_browser=False)
         self.assertFalse(select.called)
 
+    def test_local_feed_rejects_package_replaced_during_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "feed"
+            source.mkdir()
+            (source / "packages.adb").write_bytes(b"fixed index")
+            package = source / "htop-1.0-r1.apk"
+            package.write_bytes(b"first")
+            copy = INSTALLER.shutil.copyfile
+
+            def replace_after_copy(path, destination):
+                copy(path, destination)
+                if path == package:
+                    package.write_bytes(b"other")
+
+            with patch.object(INSTALLER.shutil, "copyfile", side_effect=replace_after_copy):
+                with self.assertRaisesRegex(RuntimeError, "changed while copying"):
+                    INSTALLER.snapshot_feed(source, root / "snapshot")
+
     @patch.object(INSTALLER, "download_feed")
     @patch.object(INSTALLER, "select_feed")
     @patch.object(INSTALLER, "install_with_feed")
