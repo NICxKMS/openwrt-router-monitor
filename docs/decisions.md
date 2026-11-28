@@ -4,7 +4,7 @@
 Outbound verified HTTPS → Hono Worker → one transactional Supabase RPC → PostgreSQL. Dashboard uses Supabase Auth, read-only RLS-protected queries and one device_latest subscription. Static assets bypass Worker execution. No D1, Neon, Redis, VPS or always-on computer. Direct ingestion would put more validation and enrollment complexity in public PostgreSQL functions; Edge Functions add another deployment and invocation budget without a benefit for this workload.
 
 ## ADR 002: isolate from firmware development
-Use nicx-router-monitor/ inside the existing workspace. Existing firmware edits remain intact. OpenWrt packages are copied/symlinked into an SDK explicitly, never silently inserted into the build tree.
+The standalone monitor repository owns the router package and web application. Its `openwrt/` recipes stay compatible with OpenWrt's Git feed layout. Build the monitor's APKs in a prepared SDK. Firmware consumers can pin the package source without participating in monitor releases.
 
 ## ADR 003: compact storage and bounded retention
 One common metrics row per 10-second sample, sparse detail payloads at their own interval, one latest state per device. Aggregations preserve min/max/sum/count and counter deltas separately. Defaults are storage-budgeted and documented as estimates until actual pg_total_relation_size measurements exist. Seven raw days plus long rich JSON histories cannot be promised inside 500 MB. Maintenance rolls up before deletion and stops accepting lower-priority data on an application storage guard. PostgreSQL DELETE reuses space after vacuum; it does not immediately shrink allocated files.

@@ -16,10 +16,9 @@ Use `python3 -B scripts/dev-stack.py --check` from the monitoring directory to r
 
 ## 2. Cloudflare Worker and secrets
 
-Authenticate with Wrangler in your own account. No paid Workers plan is needed. Secrets are entered interactively so they do not appear in command history:
+Authenticate with Wrangler in your own account. No paid Workers plan is needed. From the standalone monitor checkout, enter secrets interactively to keep them out of command history.
 
 ```sh
-cd /home/nicx/projects/openwrt-jidu6111/nicx-router-monitor
 pnpm install --frozen-lockfile
 pnpm --filter @nicx/worker exec wrangler login
 pnpm --filter @nicx/worker exec wrangler secret put SUPABASE_URL
@@ -29,13 +28,7 @@ pnpm --filter @nicx/worker exec wrangler secret put ADMIN_USER_ID
 
 Review `apps/worker/wrangler.jsonc`: its rate-limit namespace6111 must be unique within your account; `APP_ORIGIN` must exactly match the browser origin. Wrangler can create the Worker when adding its first secret; confirm the account/project name it shows. The privileged Supabase key is never a `VITE_` variable and never installed on the router.
 
-Build the monitoring bundle from the exact clean candidate checkout, using the production browser publishable key in the environment. From the repository root:
-
-```sh
-python3 -B scripts/monitor-bundle.py build "$OUTPUT/monitor-bundle.tar.gz" --source-commit "$COMMIT"
-```
-
-Run the monitoring CI checks and include this file and its SHA-256 in the Stable draft manifest. The protected workflow verifies that digest, deploys the fixed bundle with Wrangler and reports the active Worker version. Rehearse and approve changes to Cloudflare routes and triggers separately before deployment. For a new Worker, apply the approved minute trigger from `apps/worker/wrangler.jsonc` with `pnpm --filter @nicx/worker exec wrangler triggers deploy`. Check that `* * * * *` appears in the Worker’s Cron Triggers before testing scheduled notifications. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+See the [release policy](releases.md#build-inputs) for building and verifying a bundle locally. The standalone production deployment workflow is pending. Keep the existing deployment in place during cutover. Rehearse and approve changes to Cloudflare routes and triggers separately. [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 
 ## 3. Domain
 
@@ -80,36 +73,4 @@ Test using a temporary CPU rule below the current measured usage with a short su
 
 ## 6. GitHub Actions
 
-The parent repository’s test workflow validates monitoring source. For production, use `production.yml`. Configure the GitHub `production` environment for the protected `stable` branch, require the maintainer’s approval, and set its `JIDU6111_PRODUCTION_MAINTAINER` variable to the reviewing GitHub username. Configure narrowly scoped `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` environment secrets. Keep runtime database credentials in Cloudflare.
-
-From the repository root, prepare the private record for the exact Stable release draft:
-
-```sh
-python3 -B scripts/promotion.py prepare --manifest "$OUTPUT/release-manifest.json" --reservation-tag "$TAG"
-```
-
-The draft manifest includes `promotion.kind` and the expected current `promotion.expected_worker_version` for changes that deploy a Worker. Use `promotion.required_agent_version` for any change that depends on a new agent. A combined change must specify it. For database or firmware changes with a Worker deployment, set `promotion.deploy_worker` to `true`. Set `promotion.expected_migrations` to the observed hosted migration identifiers expected after a database change.
-
-When an agent update is required, confirm the installed package on the same router that sent the accepted sample. Record the time of installation verification and the sample's accepted timestamp:
-
-```sh
-python3 -B scripts/promotion.py record-agent --version "$AGENT_VERSION" \
-  --installed-at "$INSTALLED_AT" --received-at "$RECEIVED_AT"
-```
-
-For a change that deploys a Worker, dispatch the workflow with the verified inputs and approve the matching GitHub environment request. For other promotions, continue directly to live verification.
-
-```sh
-set -o pipefail
-python3 -B scripts/promotion.py deployment-inputs --manifest "$OUTPUT/release-manifest.json" --reservation-tag "$TAG" |
-  gh workflow run production.yml --ref stable --json
-```
-
-Following live checks, create a private observed JSON file with `router.board`, `router.kernel`, `router.firmware`, `router.architecture`, `router.trusted_keys` (the SHA-256 fingerprints), `router.agent_version`, `worker_version`, `migrations`, `verified_at` and `checks`. Use UTC timestamps. For firmware include `observation_started_at`. For a Worker deployment include the successful GitHub Actions run ID as the numeric `production_run_id`. Take it from the production workflow run URL. Base checks are `router_identity`, `feed_signature`, `worker_health`, `database_state` and `recovery_ready`. Additional check labels depend on the change and are listed by the verification command when missing. Record checks only after collecting real evidence. Then run:
-
-```sh
-python3 -B scripts/promotion.py verify-production --manifest "$OUTPUT/release-manifest.json" \
-  --reservation-tag "$TAG" --observed "$OBSERVED"
-```
-
-After protected Stable publication succeeds, run `scripts/promotion.py complete` with the same manifest and reservation tag. It checks GitHub Latest and the published manifest before saving the observed state locally. Before clearing an interrupted reservation, check the actual router, Worker and database. If the Worker needs recovery, obtain approval to reactivate the recorded previous compatible version in Cloudflare and then verify dashboard access and telemetry. Keep the database migration history intact and use a reviewed corrective migration or a rehearsed restore when needed.
+The standalone monitor CI validates pull requests and pushes to `main`. See the [monitor release policy](releases.md) for the two channels, environment configuration and first Stable verification. The existing production deployment remains in place during cutover.

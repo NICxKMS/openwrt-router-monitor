@@ -738,13 +738,17 @@ terminate_children
 rm -f "$STATE/auth"
 ''')
         pid=int((self.state/'transport.pid').read_text())
-        # A reparented zombie cannot write; a live descendant is a regression.
-        try:
-            stat = Path(f'/proc/{pid}/stat').read_text()
-        except (FileNotFoundError, ProcessLookupError):
-            pass
-        else:
-            self.assertEqual(stat.rsplit(') ', 1)[1].split()[0], 'Z')
+        deadline = time.monotonic() + 1
+        while True:
+            try:
+                stat = Path(f'/proc/{pid}/stat').read_text()
+            except (FileNotFoundError, ProcessLookupError):
+                break
+            if stat.rsplit(') ', 1)[1].split()[0] == 'Z':
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f'Transport process {pid} is still alive after cleanup')
+            time.sleep(.01)
         self.assertFalse((self.state/'late-writer').exists())
         self.assertFalse((self.state/'auth').exists())
 
