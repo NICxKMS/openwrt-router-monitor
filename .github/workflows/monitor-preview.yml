@@ -1,27 +1,21 @@
 name: Cloudflare Development Preview
 on:
-  workflow_call:
-    inputs:
-      source_commit:
-        type: string
-        required: true
   workflow_dispatch:
     inputs:
       source_commit:
-        description: Exact protected Development commit
+        description: Exact protected main commit
         type: string
         required: true
 
 permissions:
   contents: read
 concurrency:
-  group: jidu6111-development-preview
+  group: monitor-development-preview
   cancel-in-progress: false
 
 jobs:
   preview:
-    # Enable after the standalone Preview environment is configured and approved.
-    if: ${{ false }}
+    if: github.ref == 'refs/heads/main' && github.ref_protected
     runs-on: ubuntu-latest
     environment: development-preview
     timeout-minutes: 15
@@ -30,6 +24,14 @@ jobs:
       NICX_PREVIEW_SUPABASE_URL: ${{ vars.NICX_PREVIEW_SUPABASE_URL }}
       NICX_PREVIEW_SUPABASE_PUBLISHABLE_KEY: ${{ vars.NICX_PREVIEW_SUPABASE_PUBLISHABLE_KEY }}
     steps:
+      - name: Verify the requested main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_COMMIT" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -60,21 +62,29 @@ jobs:
           WRANGLER_SEND_METRICS: 'false'
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/development" --jq .object.sha)" = "$GITHUB_SHA"
           test -n "$CLOUDFLARE_API_TOKEN"
-          [[ "$NICX_PREVIEW_SUPABASE_SECRET_KEY" == sb_secret_* ]]
+          [[ "$NICX_PREVIEW_SUPABASE_SECRET_KEY" =~ ^sb_secret_[a-zA-Z0-9_-]+$ ]]
+          status=$(printf 'header = "apikey: %s"\n' "$NICX_PREVIEW_SUPABASE_SECRET_KEY" |
+            curl --disable --config - --silent --show-error --proto '=https' --max-time 15 \
+              --output /dev/null --write-out '%{http_code}' \
+              "$NICX_PREVIEW_SUPABASE_URL/rest/v1/devices?select=id&limit=0")
+          if [[ "$status" != 200 ]]; then
+            echo 'The Preview secret key must authorize access to the Preview Supabase project.' >&2
+            exit 1
+          fi
           umask 077
           scratch=$(mktemp -d "$RUNNER_TEMP/jidu-preview.XXXXXXXX")
           trap 'rm -rf -- "$scratch"' EXIT
           jq -n '{SUPABASE_SECRET_KEY: env.NICX_PREVIEW_SUPABASE_SECRET_KEY}' > "$scratch/secrets.json"
           unset NICX_PREVIEW_SUPABASE_SECRET_KEY
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$GITHUB_SHA"
           pnpm exec wrangler preview --config wrangler.jsonc --name development --json \
             --ignore-base-config --tag "$GITHUB_SHA" --secrets-file "$scratch/secrets.json" \
             --var "APP_ORIGIN:$NICX_PREVIEW_ORIGIN" --var "SUPABASE_URL:$NICX_PREVIEW_SUPABASE_URL" \
             > "$scratch/preview.json"
           jq -e --arg origin "$NICX_PREVIEW_ORIGIN" '
-            .type == "preview" and .preview_name == "development"
-            and ((.preview_urls // []) | index($origin) != null)
+            .preview.name == "development"
+            and (.preview.urls | type == "array" and any(.[]; . == $origin or . == ($origin + "/")))
           ' "$scratch/preview.json" >/dev/null
           curl --fail --silent --show-error --retry 4 --max-time 15 \
             "$NICX_PREVIEW_ORIGIN/api/v1/health" --output "$scratch/health.json"
