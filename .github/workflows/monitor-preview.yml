@@ -83,8 +83,8 @@ jobs:
             --var "APP_ORIGIN:$NICX_PREVIEW_ORIGIN" --var "SUPABASE_URL:$NICX_PREVIEW_SUPABASE_URL" \
             > "$scratch/preview.json"
           jq -e --arg origin "$NICX_PREVIEW_ORIGIN" '
-            .type == "preview" and .preview_name == "development"
-            and ((.preview_urls // []) | index($origin) != null)
+            .preview.name == "development"
+            and (.preview.urls | type == "array" and any(.[]; . == $origin or . == ($origin + "/")))
           ' "$scratch/preview.json" >/dev/null
           curl --fail --silent --show-error --retry 4 --max-time 15 \
             "$NICX_PREVIEW_ORIGIN/api/v1/health" --output "$scratch/health.json"
