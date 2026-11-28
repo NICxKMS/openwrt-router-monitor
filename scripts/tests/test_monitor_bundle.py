@@ -46,6 +46,12 @@ class MonitorBundleTest(unittest.TestCase):
         self.assertEqual(env["VITE_SUPABASE_ANON_KEY"], "public-fixture")
         self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID", "NODE_OPTIONS"} & env.keys())
 
+    def test_beta_refuses_to_build_against_the_production_database(self):
+        production = {"SUPABASE_URL": "https://abcdefghijklmnopqrst.supabase.co"}
+        config = {"vars": production, "env": {"beta": {"vars": production}}}
+        with self.assertRaisesRegex(ValueError, "distinct"):
+            bundle.database_for_build(config, "beta")
+
     def test_pack_and_unpack_use_the_same_archive_limits(self):
         worker = self.root / "worker.js"
         dashboard = self.root / "dashboard"

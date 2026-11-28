@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
-PKG_VERSION:=1.0.0
-PKG_RELEASE:=5
+PKG_VERSION:=$(or $(NICX_MONITOR_RELEASE_VERSION),1.0.0)
+PKG_RELEASE:=$(if $(NICX_MONITOR_RELEASE_VERSION),1,5)
 
 LUCI_TITLE:=LuCI support for Nicx router telemetry
 LUCI_DEPENDS:=+luci-base +nicx-telemetry
